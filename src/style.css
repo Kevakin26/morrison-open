@@ -1,0 +1,38 @@
+@import "tailwindcss";
+
+@theme {
+  --color-augusta: #006747;
+  --color-augusta-dark: #004D35;
+  --color-gold: #C8A951;
+  --color-cream: #F2E8D5;
+  --color-dark: #1A1A2E;
+}
+
+body {
+  margin: 0;
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  background-color: var(--color-cream);
+  color: var(--color-dark);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Scoreboard numbers */
+.font-score {
+  font-family: 'JetBrains Mono', 'SF Mono', 'Fira Code', monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Augusta gradient */
+.bg-augusta-gradient {
+  background: linear-gradient(135deg, var(--color-augusta) 0%, var(--color-augusta-dark) 100%);
+}
+
+/* Gold accent text */
+.text-gold-glow {
+  color: var(--color-gold);
+  text-shadow: 0 0 10px rgba(200, 169, 81, 0.3);
+}
+
+/* Hide scrollbar but keep scroll */
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
