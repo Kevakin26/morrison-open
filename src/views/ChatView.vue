@@ -2,6 +2,8 @@
 import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { supabase } from '@/lib/supabase'
 import { useAuthStore } from '@/stores/auth'
+import { useChatStore } from '@/stores/chat'
+
 import type { Database } from '@/types/database'
 import type { RealtimeChannel } from '@supabase/supabase-js'
 
@@ -19,6 +21,7 @@ interface MessageWithMeta extends Message {
 }
 
 const auth = useAuthStore()
+const chatStore = useChatStore()
 
 const messages = ref<MessageWithMeta[]>([])
 const profiles = ref<Map<string, string>>(new Map())
@@ -67,8 +70,13 @@ function formatTimestamp(dateStr: string): string {
   return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
 }
 
+function escapeHtml(str: string): string {
+  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+}
+
 function renderContent(content: string): string {
-  return content.replace(
+  const escaped = escapeHtml(content)
+  return escaped.replace(
     /@(\w[\w\s]*?\w|\w)/g,
     '<span class="bg-gold/20 text-augusta font-semibold px-0.5 rounded">@$1</span>'
   )
@@ -165,18 +173,23 @@ async function loadMore() {
 }
 
 async function sendMessage() {
+  if (!newMessage.value.trim() || !auth.user) return
   const content = newMessage.value.trim()
-  if (!content || !auth.user) return
-
-  newMessage.value = ''
+  newMessage.value = ''  // Optimistic clear for good UX
   if (inputRef.value) {
     inputRef.value.style.height = 'auto'
   }
 
-  await supabase.from('messages').insert({
-    content,
+  const { error } = await supabase.from('messages').insert({
     user_id: auth.user.id,
+    content,
   })
+
+  if (error) {
+    newMessage.value = content  // Restore on failure
+    console.error('Failed to send message:', error)
+    return
+  }
 }
 
 function handleKeydown(e: KeyboardEvent) {
@@ -385,6 +398,7 @@ function setupRealtimeSubscriptions() {
 }
 
 onMounted(async () => {
+  chatStore.reset()
   await fetchProfiles()
   await fetchMessages()
   scrollToBottom()
@@ -398,7 +412,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="flex flex-col h-full bg-cream">
+  <div class="flex flex-col h-full bg-cream overflow-hidden">
     <!-- Header -->
     <div class="bg-augusta text-white px-4 py-3 shadow-md flex-shrink-0">
       <div class="flex items-center justify-between max-w-2xl mx-auto">
@@ -410,7 +424,7 @@ onUnmounted(() => {
     <!-- Message Feed -->
     <div
       ref="feedRef"
-      class="flex-1 overflow-y-auto px-4 py-3 space-y-3"
+      class="flex-1 overflow-y-auto overscroll-contain px-4 sm:px-6 py-3 pb-32 space-y-3"
       @scroll="handleScroll"
     >
       <div class="max-w-2xl mx-auto">
@@ -442,7 +456,7 @@ onUnmounted(() => {
 
           <!-- Message bubble wrapper (for reactions picker positioning) -->
           <div
-            class="relative max-w-[80%] group"
+            class="relative max-w-[85%] sm:max-w-[75%] md:max-w-md group"
             @mouseenter="hoverMessageId = msg.id"
             @mouseleave="hoverMessageId = null; activeReactionMessageId === msg.id ? null : null"
             @touchstart="handleLongPressStart(msg.id)"
@@ -536,20 +550,20 @@ onUnmounted(() => {
     </div>
 
     <!-- Input Bar -->
-    <div class="bg-white border-t border-gray-200 px-4 py-3 flex-shrink-0">
+    <div class="fixed bottom-16 left-0 right-0 bg-white border-t border-dark/10 px-3 py-2 safe-bottom-chat z-40">
       <div class="max-w-2xl mx-auto flex items-end gap-2">
         <textarea
           ref="inputRef"
           v-model="newMessage"
           placeholder="Send a message..."
           rows="1"
-          class="flex-1 resize-none rounded-2xl border border-gray-300 px-4 py-2 text-sm focus:outline-none focus:border-augusta focus:ring-1 focus:ring-augusta/30 bg-cream/50 placeholder-dark/30"
+          class="flex-1 resize-none rounded-2xl border border-gray-300 px-4 py-2.5 text-sm sm:text-base min-h-[44px] focus:outline-none focus:border-augusta focus:ring-1 focus:ring-augusta/30 bg-cream/50 placeholder-dark/30"
           style="max-height: 80px"
           @keydown="handleKeydown"
           @input="handleInput"
         />
         <button
-          class="flex-shrink-0 w-10 h-10 rounded-full flex items-center justify-center transition-all"
+          class="flex-shrink-0 w-11 h-11 min-w-[44px] min-h-[44px] rounded-full flex items-center justify-center transition-all"
           :class="
             newMessage.trim()
               ? 'bg-gold text-white shadow-sm hover:shadow-md hover:bg-gold/90'

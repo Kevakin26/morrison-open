@@ -166,33 +166,45 @@ export type Database = {
       }
       golfers: {
         Row: {
+          bio: string | null
           country: string
           created_at: string
           id: string
           image_url: string | null
           is_active: boolean
+          masters_record: string | null
           name: string
           odds: string | null
+          power_ranking: number | null
+          scoring_avg: number | null
           world_ranking: number
         }
         Insert: {
+          bio?: string | null
           country?: string
           created_at?: string
           id?: string
           image_url?: string | null
           is_active?: boolean
+          masters_record?: string | null
           name: string
           odds?: string | null
+          power_ranking?: number | null
+          scoring_avg?: number | null
           world_ranking?: number
         }
         Update: {
+          bio?: string | null
           country?: string
           created_at?: string
           id?: string
           image_url?: string | null
           is_active?: boolean
+          masters_record?: string | null
           name?: string
           odds?: string | null
+          power_ranking?: number | null
+          scoring_avg?: number | null
           world_ranking?: number
         }
         Relationships: []
@@ -360,6 +372,13 @@ export type Database = {
     }
     Functions: {
       auto_pick: { Args: { p_tournament_id: string }; Returns: undefined }
+      create_proxy_player: {
+        Args: {
+          p_display_name: string
+          p_tournament_id: string
+        }
+        Returns: string
+      }
       make_draft_pick: {
         Args: {
           p_golfer_id: string

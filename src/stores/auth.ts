@@ -11,18 +11,23 @@ export const useAuthStore = defineStore('auth', () => {
   const isAuthenticated = computed(() => !!user.value)
 
   async function init() {
-    const { data: { session } } = await supabase.auth.getSession()
-    if (session) {
-      user.value = session.user
-      displayName.value = session.user.user_metadata?.display_name || session.user.email || ''
-      localStorage.setItem('sb-auth-token', session.access_token)
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      if (session) {
+        user.value = session.user
+        displayName.value = session.user.user_metadata?.display_name || session.user.user_metadata?.full_name || session.user.user_metadata?.name || session.user.email || ''
+        localStorage.setItem('sb-auth-token', session.access_token)
+      }
+    } catch (e) {
+      console.error('Auth init failed:', e)
+    } finally {
+      loading.value = false
     }
-    loading.value = false
 
     supabase.auth.onAuthStateChange((_event, session) => {
       user.value = session?.user ?? null
       if (session) {
-        displayName.value = session.user.user_metadata?.display_name || session.user.email || ''
+        displayName.value = session.user.user_metadata?.display_name || session.user.user_metadata?.full_name || session.user.user_metadata?.name || session.user.email || ''
         localStorage.setItem('sb-auth-token', session.access_token)
       } else {
         displayName.value = ''
@@ -33,6 +38,16 @@ export const useAuthStore = defineStore('auth', () => {
 
   async function login(email: string, password: string) {
     const { error } = await supabase.auth.signInWithPassword({ email, password })
+    if (error) throw error
+  }
+
+  async function loginWithGoogle() {
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: 'google',
+      options: {
+        redirectTo: `${window.location.origin}/draft`,
+      },
+    })
     if (error) throw error
   }
 
@@ -55,5 +70,5 @@ export const useAuthStore = defineStore('auth', () => {
     if (error) throw error
   }
 
-  return { user, displayName, loading, isAuthenticated, init, login, register, logout, resetPassword }
+  return { user, displayName, loading, isAuthenticated, init, login, loginWithGoogle, register, logout, resetPassword }
 })

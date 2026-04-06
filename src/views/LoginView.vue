@@ -22,7 +22,7 @@ async function handleLogin() {
   loading.value = true
   try {
     await auth.login(email.value, password.value)
-    router.push('/dashboard')
+    router.push('/draft')
   } catch (e: any) {
     error.value = e.message || 'Failed to sign in. Please try again.'
   } finally {
@@ -53,11 +53,11 @@ function openForgotPassword() {
 </script>
 
 <template>
-  <div class="min-h-screen bg-augusta-gradient flex items-center justify-center px-4 py-12">
-    <div class="w-full max-w-md">
+  <div class="min-h-screen bg-golf-login flex items-center justify-center px-4 sm:px-6 py-8 sm:py-12">
+    <div class="w-full max-w-md sm:max-w-lg">
       <!-- Header -->
       <div class="text-center mb-8">
-        <div class="text-4xl mb-3">⛳</div>
+        <img src="/masters-logo.png" alt="The Masters" class="h-16 sm:h-20 mx-auto mb-3 drop-shadow-lg" />
         <h1 class="text-gold-glow text-3xl sm:text-4xl font-bold tracking-wide uppercase">
           The Morrison Open
         </h1>
@@ -67,7 +67,7 @@ function openForgotPassword() {
       </div>
 
       <!-- Login Card -->
-      <div class="bg-white/10 backdrop-blur-md rounded-2xl p-8 shadow-2xl border border-white/10">
+      <div class="bg-white/10 backdrop-blur-md rounded-2xl p-5 sm:p-8 shadow-2xl border border-white/10">
         <h2 class="text-cream text-xl font-semibold text-center mb-6">Sign In</h2>
 
         <!-- Error -->
@@ -103,7 +103,7 @@ function openForgotPassword() {
           <button
             type="submit"
             :disabled="loading"
-            class="w-full py-3 rounded-lg bg-gold text-dark font-bold text-lg uppercase tracking-wider hover:bg-gold/90 hover:shadow-lg hover:shadow-gold/20 focus:outline-none focus:ring-2 focus:ring-gold/60 transition-all duration-200 disabled:opacity-60 disabled:cursor-not-allowed"
+            class="w-full py-3 min-h-[48px] rounded-lg bg-gold text-dark font-bold text-lg uppercase tracking-wider hover:bg-gold/90 hover:shadow-lg hover:shadow-gold/20 focus:outline-none focus:ring-2 focus:ring-gold/60 transition-all duration-200 disabled:opacity-60 disabled:cursor-not-allowed"
           >
             <span v-if="loading" class="flex items-center justify-center gap-2">
               <svg class="animate-spin h-5 w-5" viewBox="0 0 24 24">
@@ -120,7 +120,7 @@ function openForgotPassword() {
         <div class="mt-6 text-center space-y-3">
           <button
             @click="openForgotPassword"
-            class="text-cream/60 text-sm hover:text-gold transition cursor-pointer bg-transparent border-none"
+            class="text-cream/60 text-sm hover:text-gold transition cursor-pointer bg-transparent border-none min-h-[44px] inline-flex items-center"
           >
             Forgot password?
           </button>

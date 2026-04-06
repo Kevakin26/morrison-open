@@ -10,7 +10,7 @@ interface GolferScore {
   position: string
   total_score: number | null
   to_par: number | null
-  today: string | null
+  today: number | null
   thru: string | null
   r1: number | null
   r2: number | null
@@ -91,7 +91,7 @@ async function fetchFromMasters(): Promise<FetchResult> {
       position: String(p.pos ?? p.position ?? ''),
       total_score: parseScore(p.total ?? p.totalScore),
       to_par: parseToPar(p.topar ?? p.toPar ?? p.today_total ?? p.overallPar),
-      today: p.today != null ? String(p.today) : null,
+      today: parseToPar(p.today),
       thru: p.thru != null ? String(p.thru) : null,
       r1: parseScore(rounds?.[0]?.score ?? rounds?.[0]?.strokes ?? p.r1 ?? p.round1),
       r2: parseScore(rounds?.[1]?.score ?? rounds?.[1]?.strokes ?? p.r2 ?? p.round2),
@@ -159,7 +159,7 @@ async function fetchFromESPN(): Promise<FetchResult> {
         position: String(c.place ?? c.position ?? ''),
         total_score: parseScore(c.totalStrokes ?? stats?.[0]?.value),
         to_par: toPar,
-        today: c.todayScore != null ? String(c.todayScore) : null,
+        today: parseToPar(c.todayScore),
         thru: c.thru != null ? String(c.thru) : null,
         r1: parseScore(linescores?.[0]?.value ?? linescores?.[0]?.score),
         r2: parseScore(linescores?.[1]?.value ?? linescores?.[1]?.score),
@@ -206,14 +206,76 @@ Deno.serve(async (req) => {
     }
   }
 
-  // 3) If both failed, log and return error
+  // 3) Third fallback: use Gemini to get scores
+  if (!result) {
+    const geminiKey = Deno.env.get('GEMINI_API_KEY')
+    if (geminiKey) {
+      try {
+        const geminiRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${geminiKey}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{ parts: [{ text: 'Get the current 2026 Masters Tournament leaderboard. For each golfer return JSON array: [{"name":"Tiger Woods","position":"T1","to_par":-5,"today":-3,"thru":"F","r1":68,"r2":70,"r3":67,"r4":null,"status":"active"}]. Return ONLY the JSON array, no other text.' }] }],
+            generationConfig: { temperature: 0, maxOutputTokens: 4000 },
+          }),
+        })
+
+        if (!geminiRes.ok) throw new Error(`Gemini returned ${geminiRes.status}`)
+
+        const geminiJson = await geminiRes.json()
+        const rawText = geminiJson.candidates?.[0]?.content?.parts?.[0]?.text ?? ''
+
+        // Extract JSON array from response (may be wrapped in markdown code fences)
+        const jsonMatch = rawText.match(/\[[\s\S]*\]/)
+        if (!jsonMatch) throw new Error('No JSON array found in Gemini response')
+
+        const parsed = JSON.parse(jsonMatch[0]) as Array<{
+          name: string
+          position: string
+          to_par: number | null
+          today: number | null
+          thru: string | null
+          r1: number | null
+          r2: number | null
+          r3: number | null
+          r4: number | null
+          status: string
+        }>
+
+        if (!Array.isArray(parsed) || parsed.length === 0) {
+          throw new Error('Gemini returned empty or invalid array')
+        }
+
+        const golfers: GolferScore[] = parsed.map((p) => ({
+          name: String(p.name ?? ''),
+          position: String(p.position ?? ''),
+          total_score: null,
+          to_par: parseToPar(p.to_par),
+          today: parseToPar(p.today),
+          thru: p.thru != null ? String(p.thru) : null,
+          r1: parseScore(p.r1),
+          r2: parseScore(p.r2),
+          r3: parseScore(p.r3),
+          r4: parseScore(p.r4),
+          status: String(p.status ?? 'active'),
+        }))
+
+        result = { source: 'gemini', golfers, currentRound: null, cutLine: null }
+        console.log(`Fetched ${result.golfers.length} golfers from Gemini`)
+      } catch (e) {
+        console.warn('Gemini fallback failed:', (e as Error).message)
+        error = `All sources failed. Gemini: ${(e as Error).message}`
+      }
+    }
+  }
+
+  // 4) If all failed, log and return error
   if (!result) {
     await supabase.from('score_fetch_logs').insert({
       source: 'none',
       status: 'error',
       golfers_updated: 0,
-      details: error,
-      fetched_at: new Date().toISOString(),
+      error_message: error,
     })
 
     return new Response(JSON.stringify({ success: false, error }), {
@@ -233,8 +295,7 @@ Deno.serve(async (req) => {
       source: result.source,
       status: 'error',
       golfers_updated: 0,
-      details: msg,
-      fetched_at: new Date().toISOString(),
+      error_message: msg,
     })
 
     return new Response(JSON.stringify({ success: false, error: msg }), {
@@ -247,6 +308,29 @@ Deno.serve(async (req) => {
   const nameMap = new Map<string, string>()
   for (const g of dbGolfers) {
     nameMap.set(normalizeName(g.name), g.id)
+  }
+
+  // Fetch the active tournament ID
+  const { data: activeTournament } = await supabase
+    .from('tournaments')
+    .select('id')
+    .order('year', { ascending: false })
+    .limit(1)
+    .single()
+
+  const tournamentId = activeTournament?.id
+
+  if (!tournamentId) {
+    await supabase.from('score_fetch_logs').insert({
+      source: result.source || 'unknown',
+      status: 'error',
+      golfers_updated: 0,
+      error_message: 'No active tournament found',
+    })
+    return new Response(JSON.stringify({ success: false, error: 'No active tournament found' }), {
+      status: 500,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    })
   }
 
   // 5) Upsert scores
@@ -281,6 +365,7 @@ Deno.serve(async (req) => {
         .upsert(
           {
             golfer_id: flippedId,
+            tournament_id: tournamentId,
             position: golfer.position || null,
             total_score: golfer.total_score,
             to_par: golfer.to_par,
@@ -294,7 +379,7 @@ Deno.serve(async (req) => {
             is_manual: false,
             updated_at: new Date().toISOString(),
           },
-          { onConflict: 'golfer_id' }
+          { onConflict: 'golfer_id,tournament_id' }
         )
 
       if (!upsertErr) updatedCount++
@@ -306,6 +391,7 @@ Deno.serve(async (req) => {
       .upsert(
         {
           golfer_id: golferId,
+          tournament_id: tournamentId,
           position: golfer.position || null,
           total_score: golfer.total_score,
           to_par: golfer.to_par,
@@ -319,7 +405,7 @@ Deno.serve(async (req) => {
           is_manual: false,
           updated_at: new Date().toISOString(),
         },
-        { onConflict: 'golfer_id' }
+        { onConflict: 'golfer_id,tournament_id' }
       )
 
     if (!upsertErr) updatedCount++
@@ -357,11 +443,10 @@ Deno.serve(async (req) => {
     source: result.source,
     status: 'success',
     golfers_updated: updatedCount,
-    details:
+    error_message:
       unmatchedNames.length > 0
         ? `Unmatched: ${unmatchedNames.join(', ')}`
         : null,
-    fetched_at: new Date().toISOString(),
   })
 
   const responseBody = {

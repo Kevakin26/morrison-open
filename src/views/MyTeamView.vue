@@ -35,6 +35,7 @@ const tournamentStarted = computed(() => {
   return s === 'in-progress' || s === 'completed'
 })
 
+
 function formatToPar(n: number | null): string {
   if (n == null) return '--'
   if (n === 0) return 'E'
@@ -52,15 +53,18 @@ function isActive(score: GolferScore | null): boolean {
 }
 
 function isCut(score: GolferScore | null): boolean {
-  return score?.status === 'cut'
+  const s = score?.status?.toLowerCase()
+  return s === 'cut' || s === 'mc'
 }
 
 function isWithdrawn(score: GolferScore | null): boolean {
-  return score?.status === 'withdrawn' || score?.status === 'wd'
+  const s = score?.status?.toLowerCase()
+  return s === 'withdrawn' || s === 'wd'
 }
 
 function isDQ(score: GolferScore | null): boolean {
-  return score?.status === 'dq' || score?.status === 'disqualified'
+  const s = score?.status?.toLowerCase()
+  return s === 'dq' || s === 'disqualified'
 }
 
 function statusLabel(score: GolferScore | null): string {
@@ -114,19 +118,17 @@ const combinedScore = computed<number | null>(() => {
   const counting = countingGolfers.value
   if (counting.length === 0) return null
   let total = 0
+  let hasAnyScore = false
   for (const tg of counting) {
     if (tg.score?.to_par != null) {
       total += tg.score.to_par
+      hasAnyScore = true
     }
   }
-  return total
+  return hasAnyScore ? total : null
 })
 
-const activeCount = computed(() =>
-  teamGolfers.value.filter(tg => isActive(tg.score)).length
-)
 
-const isEliminated = computed(() => activeCount.value < 2)
 
 // Calculate rank among all players
 const currentRank = computed<string>(() => {
@@ -148,22 +150,27 @@ const currentRank = computed<string>(() => {
       .filter(s => s && isActive(s))
       .sort((a, b) => (a!.to_par ?? 999) - (b!.to_par ?? 999))
 
-    if (scores.length < 2) {
-      playerScores.set(userId, null) // eliminated
+    if (scores.length === 0) {
+      playerScores.set(userId, null) // no active golfers
     } else {
       const best2 = scores.slice(0, 2)
-      const total = best2.reduce((sum, s) => sum + (s!.to_par ?? 0), 0)
-      playerScores.set(userId, total)
+      const withScores = best2.filter(s => s!.to_par != null)
+      if (withScores.length === 0) {
+        playerScores.set(userId, null)
+      } else {
+        const total = withScores.reduce((sum, s) => sum + s!.to_par!, 0)
+        playerScores.set(userId, total)
+      }
     }
   }
 
-  // Sort players (null = eliminated, goes to bottom)
+  // Sort players (null = no active golfers, goes to bottom)
   const sorted = Array.from(playerScores.entries())
     .filter(([, score]) => score !== null)
     .sort((a, b) => a[1]! - b[1]!)
 
   const myScore = playerScores.get(auth.user.id)
-  if (myScore == null) return 'ELIM'
+  if (myScore == null) return '--'
 
   const myIdx = sorted.findIndex(([id]) => id === auth.user!.id)
   if (myIdx === -1) return '--'
@@ -205,9 +212,9 @@ async function fetchData() {
   const golferIds = draftPicks.value.map(p => p.golfer_id)
   const allGolferIds = [...new Set(allDraftPicks.value.map(p => p.golfer_id))]
 
-  if (golferIds.length > 0) {
+  if (allGolferIds.length > 0) {
     const [golfersRes, scoresRes] = await Promise.all([
-      supabase.from('golfers').select('*').in('id', golferIds),
+      supabase.from('golfers').select('*').in('id', golferIds.length > 0 ? golferIds : allGolferIds),
       supabase.from('golfer_scores').select('*').eq('tournament_id', t.id).in('golfer_id', allGolferIds),
     ])
     golfers.value = golfersRes.data ?? []
@@ -251,7 +258,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="p-4 max-w-lg mx-auto space-y-4 pb-20">
+  <div class="p-4 sm:p-6 lg:p-8 max-w-lg md:max-w-2xl lg:max-w-3xl mx-auto space-y-4 pb-24">
     <!-- Loading -->
     <div v-if="loading" class="flex items-center justify-center py-20">
       <div class="animate-spin rounded-full h-10 w-10 border-4 border-augusta border-t-transparent"></div>
@@ -265,7 +272,7 @@ onUnmounted(() => {
         <!-- Combined Score -->
         <div v-if="tournamentStarted && combinedScore !== null" class="mt-3">
           <p
-            class="text-4xl font-bold font-score"
+            class="text-4xl md:text-5xl font-bold font-score"
             :class="combinedScore < 0 ? 'text-red-600' : combinedScore > 0 ? 'text-dark' : 'text-dark'"
           >
             Combined: {{ formatToPar(combinedScore) }}
@@ -278,10 +285,9 @@ onUnmounted(() => {
         <!-- Rank -->
         <div v-if="tournamentStarted && currentRank !== '--'" class="mt-2">
           <span
-            class="inline-block px-4 py-1.5 rounded-full text-sm font-bold"
-            :class="currentRank === 'ELIM' ? 'bg-red-100 text-red-700' : 'bg-augusta/10 text-augusta'"
+            class="inline-block px-4 py-1.5 rounded-full text-sm font-bold bg-augusta/10 text-augusta"
           >
-            {{ currentRank === 'ELIM' ? 'ELIMINATED' : currentRank }}
+            {{ currentRank }}
           </span>
         </div>
 
@@ -289,17 +295,6 @@ onUnmounted(() => {
         <div v-if="!tournamentStarted && draftPicks.length > 0" class="mt-3">
           <p class="text-dark/50 text-sm">Tournament hasn't started yet</p>
         </div>
-      </div>
-
-      <!-- Eliminated Banner -->
-      <div
-        v-if="tournamentStarted && isEliminated"
-        class="bg-red-600 text-white rounded-2xl p-5 text-center shadow-lg"
-      >
-        <p class="text-2xl font-bold tracking-wide">ELIMINATED</p>
-        <p class="text-white/80 text-sm mt-1">
-          Fewer than 2 golfers made the cut
-        </p>
       </div>
 
       <!-- No picks -->
@@ -311,6 +306,7 @@ onUnmounted(() => {
       </div>
 
       <!-- Golfer Cards -->
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
       <div
         v-for="tg in teamGolfers"
         :key="tg.pick.id"
@@ -398,6 +394,7 @@ onUnmounted(() => {
             </div>
           </div>
         </div>
+      </div>
       </div>
     </template>
   </div>

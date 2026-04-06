@@ -15,7 +15,7 @@ const routes = [
   },
   {
     path: '/',
-    redirect: '/dashboard',
+    redirect: '/draft',
   },
   {
     path: '/dashboard',
@@ -52,6 +52,10 @@ const routes = [
     name: 'Matchup',
     component: () => import('@/views/MatchupView.vue'),
   },
+  {
+    path: '/:pathMatch(.*)*',
+    redirect: '/draft',
+  },
 ]
 
 const router = createRouter({
@@ -59,14 +63,16 @@ const router = createRouter({
   routes,
 })
 
+import { useAuthStore } from '@/stores/auth'
+
 router.beforeEach((to, _from, next) => {
   const requiresAuth = to.meta.requiresAuth !== false
-  const token = localStorage.getItem('sb-auth-token')
+  const auth = useAuthStore()
 
-  if (requiresAuth && !token) {
+  if (requiresAuth && !auth.isAuthenticated) {
     next('/login')
-  } else if (!requiresAuth && token && (to.name === 'Login' || to.name === 'Register')) {
-    next('/dashboard')
+  } else if (!requiresAuth && auth.isAuthenticated && (to.name === 'Login' || to.name === 'Register')) {
+    next('/draft')
   } else {
     next()
   }

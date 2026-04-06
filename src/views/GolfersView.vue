@@ -48,7 +48,7 @@ function getFlag(country: string): string {
 const golfers = ref<Golfer[]>([])
 const loading = ref(true)
 const searchQuery = ref('')
-const sortBy = ref<'name' | 'world_ranking' | 'odds'>('world_ranking')
+const sortBy = ref<'name' | 'world_ranking'>('world_ranking')
 const tournamentStatus = ref<string>('pre-draft')
 
 const showModal = ref(false)
@@ -78,18 +78,13 @@ const filteredGolfers = computed(() => {
 
   // Sort
   if (sortBy.value === 'name') {
-    result.sort((a, b) => a.name.localeCompare(b.name))
-  } else if (sortBy.value === 'world_ranking') {
-    result.sort((a, b) => a.world_ranking - b.world_ranking)
-  } else if (sortBy.value === 'odds') {
     result.sort((a, b) => {
-      const parseOdds = (o: string | null): number => {
-        if (!o) return 99999
-        const n = parseInt(o.replace('+', ''), 10)
-        return isNaN(n) ? 99999 : n
-      }
-      return parseOdds(a.odds) - parseOdds(b.odds)
+      const lastA = a.name.split(' ').pop() || ''
+      const lastB = b.name.split(' ').pop() || ''
+      return lastA.localeCompare(lastB)
     })
+  } else if (sortBy.value === 'world_ranking') {
+    result.sort((a, b) => (a.power_ranking ?? 999) - (b.power_ranking ?? 999))
   }
 
   return result
@@ -237,7 +232,8 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="min-h-screen p-4 md:p-8 max-w-7xl mx-auto">
+  <div class="min-h-screen bg-golf-draft">
+  <div class="p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto pb-24">
     <!-- Header -->
     <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
       <div class="flex items-center gap-3">
@@ -252,7 +248,7 @@ onUnmounted(() => {
       <button
         v-if="isEditable"
         @click="openAddModal"
-        class="inline-flex items-center gap-2 bg-gold hover:bg-gold/90 text-dark font-semibold px-5 py-2.5 rounded-lg transition-colors shadow-sm cursor-pointer"
+        class="inline-flex items-center gap-2 bg-gold hover:bg-gold/90 text-dark font-semibold px-5 py-2.5 min-h-[44px] rounded-lg transition-colors shadow-sm cursor-pointer"
       >
         <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
           <path fill-rule="evenodd" d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" clip-rule="evenodd" />
@@ -279,7 +275,7 @@ onUnmounted(() => {
           v-model="searchQuery"
           type="text"
           placeholder="Search golfers..."
-          class="w-full pl-10 pr-4 py-2.5 rounded-lg border border-dark/15 bg-white focus:outline-none focus:ring-2 focus:ring-augusta/40 focus:border-augusta transition-colors"
+          class="w-full pl-10 pr-4 py-2.5 min-h-[44px] rounded-lg border border-dark/15 bg-white focus:outline-none focus:ring-2 focus:ring-augusta/40 focus:border-augusta transition-colors"
         />
       </div>
 
@@ -287,7 +283,7 @@ onUnmounted(() => {
         <button
           @click="sortBy = 'name'"
           :class="[
-            'px-3 py-1.5 rounded-md text-sm font-medium transition-colors cursor-pointer',
+            'px-3 py-1.5 min-h-[44px] rounded-md text-sm font-medium transition-colors cursor-pointer',
             sortBy === 'name' ? 'bg-augusta text-white' : 'text-dark/60 hover:text-dark hover:bg-dark/5',
           ]"
         >
@@ -296,20 +292,11 @@ onUnmounted(() => {
         <button
           @click="sortBy = 'world_ranking'"
           :class="[
-            'px-3 py-1.5 rounded-md text-sm font-medium transition-colors cursor-pointer',
+            'px-3 py-1.5 min-h-[44px] rounded-md text-sm font-medium transition-colors cursor-pointer',
             sortBy === 'world_ranking' ? 'bg-augusta text-white' : 'text-dark/60 hover:text-dark hover:bg-dark/5',
           ]"
         >
-          Ranking
-        </button>
-        <button
-          @click="sortBy = 'odds'"
-          :class="[
-            'px-3 py-1.5 rounded-md text-sm font-medium transition-colors cursor-pointer',
-            sortBy === 'odds' ? 'bg-augusta text-white' : 'text-dark/60 hover:text-dark hover:bg-dark/5',
-          ]"
-        >
-          Odds
+          Power Rank
         </button>
       </div>
     </div>
@@ -332,19 +319,46 @@ onUnmounted(() => {
     </div>
 
     <!-- Golfer Grid -->
-    <div v-else class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+    <div v-else class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-5">
       <div
         v-for="golfer in filteredGolfers"
         :key="golfer.id"
-        class="bg-white rounded-xl shadow-sm border border-dark/8 p-4 hover:shadow-md transition-shadow"
+        class="bg-white rounded-2xl shadow-sm border border-dark/8 p-5 hover:shadow-lg transition-shadow"
       >
-        <div class="flex items-start justify-between gap-2">
+        <div class="flex items-start gap-4">
+          <img
+            v-if="golfer.image_url"
+            :src="golfer.image_url"
+            :alt="golfer.name"
+            class="w-16 h-16 sm:w-20 sm:h-20 rounded-xl object-cover bg-cream shrink-0"
+          />
+          <div v-else class="w-16 h-16 sm:w-20 sm:h-20 rounded-xl bg-augusta/10 flex items-center justify-center text-augusta text-2xl shrink-0">
+            ⛳
+          </div>
           <div class="min-w-0 flex-1">
-            <h3 class="font-bold text-dark text-lg leading-tight truncate">{{ golfer.name }}</h3>
-            <p class="text-dark/60 text-sm mt-0.5">
-              <span v-if="getFlag(golfer.country)" class="mr-1">{{ getFlag(golfer.country) }}</span>
-              {{ golfer.country }}
-            </p>
+            <div class="flex items-start justify-between gap-2">
+              <div>
+                <h3 class="font-bold text-dark text-xl leading-tight">{{ golfer.name }}</h3>
+                <p class="text-dark/60 text-sm mt-1">
+                  <span v-if="getFlag(golfer.country)" class="mr-1">{{ getFlag(golfer.country) }}</span>
+                  {{ golfer.country }}
+                </p>
+              </div>
+              <span v-if="golfer.power_ranking" class="bg-augusta text-white text-sm font-bold font-score px-2.5 py-1 rounded-lg shrink-0">
+                #{{ golfer.power_ranking }}
+              </span>
+            </div>
+            <div class="flex items-center gap-4 mt-2">
+              <div v-if="golfer.scoring_avg" class="flex items-center gap-1.5">
+                <span class="text-xs text-dark/40 uppercase tracking-wide">Augusta Avg</span>
+                <span class="font-semibold text-dark font-score text-sm">{{ golfer.scoring_avg }}</span>
+              </div>
+              <div class="flex items-center gap-1.5">
+                <span class="text-xs text-dark/40 uppercase tracking-wide">Masters</span>
+                <span v-if="golfer.masters_record" class="font-semibold text-augusta text-xs">{{ golfer.masters_record.split('-').length }} starts</span>
+                <span v-else class="font-semibold text-gold text-xs">Rookie</span>
+              </div>
+            </div>
           </div>
 
           <!-- Actions -->
@@ -370,15 +384,11 @@ onUnmounted(() => {
           </div>
         </div>
 
-        <div class="flex items-center gap-4 mt-3 pt-3 border-t border-dark/8">
-          <div>
-            <span class="text-xs text-dark/40 uppercase tracking-wide">Rank</span>
-            <p class="font-semibold text-dark font-score">#{{ golfer.world_ranking }}</p>
-          </div>
-          <div>
-            <span class="text-xs text-dark/40 uppercase tracking-wide">Odds</span>
-            <p class="font-semibold text-augusta font-score">{{ golfer.odds ?? '—' }}</p>
-          </div>
+        <p v-if="golfer.bio" class="mt-3 text-sm text-dark/60 leading-relaxed line-clamp-3">{{ golfer.bio }}</p>
+
+        <div v-if="golfer.masters_record" class="mt-3 pt-3 border-t border-dark/8">
+          <span class="text-xs text-dark/40 uppercase tracking-wide">Masters History</span>
+          <p class="text-xs text-dark/50 font-score mt-0.5 break-all">{{ golfer.masters_record }}</p>
         </div>
       </div>
     </div>
@@ -491,5 +501,6 @@ onUnmounted(() => {
         </div>
       </div>
     </Teleport>
+  </div>
   </div>
 </template>

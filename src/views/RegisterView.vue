@@ -14,6 +14,7 @@ const error = ref('')
 const loading = ref(false)
 const submitted = ref(false)
 
+
 const nameError = computed(() => {
   if (!submitted.value && !displayName.value) return ''
   if (displayName.value.length === 0) return 'Display name is required.'
@@ -55,7 +56,7 @@ async function handleRegister() {
   loading.value = true
   try {
     await auth.register(email.value, password.value, displayName.value)
-    router.push('/dashboard')
+    router.push('/draft')
   } catch (e: any) {
     error.value = e.message || 'Registration failed. Please try again.'
   } finally {
@@ -65,11 +66,11 @@ async function handleRegister() {
 </script>
 
 <template>
-  <div class="min-h-screen bg-augusta-gradient flex items-center justify-center px-4 py-12">
-    <div class="w-full max-w-md">
+  <div class="min-h-screen bg-golf-login flex items-center justify-center px-4 sm:px-6 py-8 sm:py-12">
+    <div class="w-full max-w-md sm:max-w-lg">
       <!-- Header -->
       <div class="text-center mb-8">
-        <div class="text-4xl mb-3">⛳</div>
+        <img src="/masters-logo.png" alt="The Masters" class="h-16 sm:h-20 mx-auto mb-3 drop-shadow-lg" />
         <h1 class="text-gold-glow text-3xl sm:text-4xl font-bold tracking-wide uppercase">
           Join The Morrison Open
         </h1>
@@ -79,7 +80,7 @@ async function handleRegister() {
       </div>
 
       <!-- Register Card -->
-      <div class="bg-white/10 backdrop-blur-md rounded-2xl p-8 shadow-2xl border border-white/10">
+      <div class="bg-white/10 backdrop-blur-md rounded-2xl p-5 sm:p-8 shadow-2xl border border-white/10">
         <h2 class="text-cream text-xl font-semibold text-center mb-6">Create Account</h2>
 
         <!-- Auth Error -->
@@ -146,7 +147,7 @@ async function handleRegister() {
           <button
             type="submit"
             :disabled="loading"
-            class="w-full py-3 rounded-lg bg-gold text-dark font-bold text-lg uppercase tracking-wider hover:bg-gold/90 hover:shadow-lg hover:shadow-gold/20 focus:outline-none focus:ring-2 focus:ring-gold/60 transition-all duration-200 disabled:opacity-60 disabled:cursor-not-allowed"
+            class="w-full py-3 min-h-[48px] rounded-lg bg-gold text-dark font-bold text-lg uppercase tracking-wider hover:bg-gold/90 hover:shadow-lg hover:shadow-gold/20 focus:outline-none focus:ring-2 focus:ring-gold/60 transition-all duration-200 disabled:opacity-60 disabled:cursor-not-allowed"
           >
             <span v-if="loading" class="flex items-center justify-center gap-2">
               <svg class="animate-spin h-5 w-5" viewBox="0 0 24 24">

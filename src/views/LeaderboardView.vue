@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { supabase } from '@/lib/supabase'
+
 import type { Database } from '@/types/database'
 import type { RealtimeChannel } from '@supabase/supabase-js'
 
@@ -14,7 +15,6 @@ interface PlayerStanding {
   userId: string
   name: string
   combinedScore: number | null
-  eliminated: boolean
   golfers: PlayerGolfer[]
   winningOdds: number | null
 }
@@ -91,17 +91,17 @@ const playerStandings = computed<PlayerStanding[]>(() => {
       pg.counting = idx < 2
     })
 
-    const eliminated = active.length < 2
     let combinedScore: number | null = null
 
-    if (!eliminated) {
-      const counting = active.filter(pg => pg.counting)
-      combinedScore = counting.reduce((sum, pg) => sum + (pg.score?.to_par ?? 0), 0)
+    const counting = active.filter(pg => pg.counting)
+    const withScores = counting.filter(pg => pg.score?.to_par != null)
+    if (withScores.length > 0) {
+      combinedScore = withScores.reduce((sum, pg) => sum + pg.score!.to_par!, 0)
     }
 
     // Winning odds: implied probability of best 2 golfers
     let winningOdds: number | null = null
-    if (!eliminated && active.length >= 2) {
+    if (active.length >= 2) {
       const best2 = active.slice(0, 2)
       const prob = best2.reduce((sum, pg) => sum + parseOddsToProb(pg.golfer.odds), 0)
       winningOdds = prob
@@ -111,7 +111,6 @@ const playerStandings = computed<PlayerStanding[]>(() => {
       userId: profile.id,
       name: profile.display_name,
       combinedScore,
-      eliminated,
       golfers: [...active, ...inactive],
       winningOdds,
     })
@@ -127,30 +126,28 @@ const playerStandings = computed<PlayerStanding[]>(() => {
     }
   }
 
-  // Sort: non-eliminated by combinedScore, eliminated at bottom
-  const active = standings.filter(s => !s.eliminated).sort((a, b) => (a.combinedScore ?? 999) - (b.combinedScore ?? 999))
-  const elim = standings.filter(s => s.eliminated)
+  // Sort by combinedScore; null scores go to bottom
+  standings.sort((a, b) => (a.combinedScore ?? 999) - (b.combinedScore ?? 999))
 
-  return [...active, ...elim]
+  return standings
 })
 
 // Compute ranks with ties
 const rankedStandings = computed(() => {
   const result: { standing: PlayerStanding; rank: string }[] = []
-  const active = playerStandings.value.filter(s => !s.eliminated)
-  const elim = playerStandings.value.filter(s => s.eliminated)
+  const withScore = playerStandings.value.filter(s => s.combinedScore !== null)
+  const noScore = playerStandings.value.filter(s => s.combinedScore === null)
 
-  for (let i = 0; i < active.length; i++) {
-    const s = active[i]
-    // Count how many share the same score
-    const sameScore = active.filter(x => x.combinedScore === s.combinedScore).length
-    const rank = active.filter(x => (x.combinedScore ?? 999) < (s.combinedScore ?? 999)).length + 1
+  for (let i = 0; i < withScore.length; i++) {
+    const s = withScore[i]
+    const sameScore = withScore.filter(x => x.combinedScore === s.combinedScore).length
+    const rank = withScore.filter(x => (x.combinedScore ?? 999) < (s.combinedScore ?? 999)).length + 1
     const prefix = sameScore > 1 ? 'T' : ''
     result.push({ standing: s, rank: `${prefix}${rank}` })
   }
 
-  for (const s of elim) {
-    result.push({ standing: s, rank: '' })
+  for (const s of noScore) {
+    result.push({ standing: s, rank: '--' })
   }
 
   return result
@@ -269,7 +266,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="p-4 max-w-2xl mx-auto pb-20">
+  <div class="p-4 sm:p-6 lg:p-8 max-w-2xl lg:max-w-4xl mx-auto pb-24">
     <!-- Loading -->
     <div v-if="loading" class="flex items-center justify-center py-20">
       <div class="animate-spin rounded-full h-10 w-10 border-4 border-augusta border-t-transparent"></div>
@@ -277,20 +274,28 @@ onUnmounted(() => {
 
     <template v-else>
       <!-- Header -->
-      <h1 class="text-2xl font-bold text-dark text-center pt-2 mb-4">Leaderboard</h1>
+      <div class="flex items-center justify-between pt-2 mb-4">
+        <h1 class="text-2xl font-bold text-dark">Leaderboard</h1>
+        <router-link
+          to="/matchup"
+          class="text-sm font-semibold text-augusta hover:text-augusta-dark transition-colors min-h-[44px] flex items-center"
+        >
+          Head to Head &rarr;
+        </router-link>
+      </div>
 
       <!-- Tabs -->
       <div class="flex bg-white rounded-xl shadow-sm border border-dark/8 p-1 mb-5">
         <button
           @click="activeTab = 'morrison'"
-          class="flex-1 py-2.5 rounded-lg text-sm font-semibold transition-colors cursor-pointer"
+          class="flex-1 py-2.5 min-h-[44px] rounded-lg text-sm font-semibold transition-colors cursor-pointer"
           :class="activeTab === 'morrison' ? 'bg-augusta text-white' : 'text-dark/60 hover:text-dark'"
         >
           Morrison Open
         </button>
         <button
           @click="activeTab = 'masters'"
-          class="flex-1 py-2.5 rounded-lg text-sm font-semibold transition-colors cursor-pointer"
+          class="flex-1 py-2.5 min-h-[44px] rounded-lg text-sm font-semibold transition-colors cursor-pointer"
           :class="activeTab === 'masters' ? 'bg-augusta text-white' : 'text-dark/60 hover:text-dark'"
         >
           Masters Leaderboard
@@ -306,28 +311,20 @@ onUnmounted(() => {
           <!-- Player Row -->
           <button
             @click="toggleExpand(standing.userId)"
-            class="w-full bg-white rounded-xl shadow-sm border transition-all cursor-pointer"
+            class="w-full bg-white rounded-xl shadow-sm border transition-all cursor-pointer min-h-[48px]"
             :class="{
-              'border-gold/50 bg-gold/5': idx === 0 && !standing.eliminated,
-              'border-dark/8': idx !== 0 && !standing.eliminated,
-              'border-red-300 bg-red-50/50': standing.eliminated,
+              'border-gold/50 bg-gold/5': idx === 0,
+              'border-dark/8': idx !== 0,
             }"
           >
             <div class="flex items-center gap-3 p-4">
               <!-- Rank -->
               <div class="w-10 shrink-0 text-center">
                 <span
-                  v-if="!standing.eliminated"
                   class="text-lg font-bold font-score"
                   :class="idx === 0 ? 'text-gold' : 'text-dark/40'"
                 >
                   {{ rank }}
-                </span>
-                <span
-                  v-else
-                  class="text-xs font-bold text-red-600 bg-red-100 px-1.5 py-0.5 rounded"
-                >
-                  ELIM
                 </span>
               </div>
 
@@ -361,10 +358,10 @@ onUnmounted(() => {
                   :class="{
                     'text-red-600': (standing.combinedScore ?? 0) < 0,
                     'text-dark': (standing.combinedScore ?? 0) >= 0,
-                    'text-dark/30': standing.eliminated,
+                    'text-dark/30': standing.combinedScore === null,
                   }"
                 >
-                  {{ standing.eliminated ? '--' : formatToPar(standing.combinedScore) }}
+                  {{ formatToPar(standing.combinedScore) }}
                 </span>
               </div>
 
@@ -440,9 +437,9 @@ onUnmounted(() => {
       </div>
 
       <!-- ==================== MASTERS LEADERBOARD TAB ==================== -->
-      <div v-if="activeTab === 'masters'">
+      <div v-if="activeTab === 'masters'" class="overflow-x-auto overscroll-contain -mx-4 sm:mx-0">
         <!-- Table Header -->
-        <div class="flex items-center gap-2 px-4 py-2 text-[10px] text-dark/40 uppercase tracking-wider font-semibold border-b border-dark/10">
+        <div class="flex items-center gap-2 px-4 py-2 text-[10px] text-dark/40 uppercase tracking-wider font-semibold border-b border-dark/10 min-w-[540px]">
           <div class="w-10 text-center">Pos</div>
           <div class="flex-1">Player</div>
           <div class="w-12 text-center">To Par</div>
@@ -462,7 +459,7 @@ onUnmounted(() => {
           <!-- Cut line -->
           <div
             v-if="cutLineIndex >= 0 && idx === cutLineIndex + 1"
-            class="flex items-center gap-2 px-4 py-1"
+            class="flex items-center gap-2 px-4 py-1 min-w-[540px]"
           >
             <div class="flex-1 border-t-2 border-dashed border-red-400"></div>
             <span class="text-[10px] text-red-500 font-bold uppercase shrink-0">Projected Cut</span>
@@ -470,7 +467,7 @@ onUnmounted(() => {
           </div>
 
           <div
-            class="flex items-center gap-2 px-4 py-2.5 border-b border-dark/5"
+            class="flex items-center gap-2 px-4 py-2.5 border-b border-dark/5 min-w-[540px]"
             :class="{
               'bg-red-50/50': !isGolferActive(entry.score),
             }"
@@ -537,6 +534,16 @@ onUnmounted(() => {
         <div v-if="mastersLeaderboard.length === 0" class="text-center py-12 text-dark/50">
           <p>No scores available yet</p>
         </div>
+      </div>
+
+      <!-- Morrison Open tab: matchup link -->
+      <div v-if="activeTab === 'morrison'" class="mt-4 text-center">
+        <router-link
+          to="/matchup"
+          class="inline-flex items-center gap-1 text-sm font-semibold text-augusta hover:underline min-h-[44px]"
+        >
+          Compare Head to Head &rarr;
+        </router-link>
       </div>
     </template>
   </div>

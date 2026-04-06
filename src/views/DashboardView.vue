@@ -2,6 +2,7 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { supabase } from '@/lib/supabase'
 import { useAuthStore } from '@/stores/auth'
+
 import type { Database } from '@/types/database'
 import type { RealtimeChannel } from '@supabase/supabase-js'
 
@@ -37,6 +38,7 @@ const draftPicks = ref<DraftPick[]>([])
 const golferScores = ref<GolferScore[]>([])
 const golfers = ref<Golfer[]>([])
 
+
 // Countdown
 const countdown = ref({ days: 0, hours: 0, minutes: 0, seconds: 0 })
 let countdownInterval: ReturnType<typeof setInterval> | null = null
@@ -44,7 +46,7 @@ let countdownInterval: ReturnType<typeof setInterval> | null = null
 // Realtime channels
 const channels: RealtimeChannel[] = []
 
-const DRAFT_DATE = new Date('2026-04-07T01:00:00Z') // April 6, 6 PM MST
+const DRAFT_DATE = new Date('2026-04-07T00:00:00Z') // April 6, 6:00 PM MST
 
 const tournamentStatus = computed(() => tournament.value?.status ?? 'pre-draft')
 
@@ -83,27 +85,33 @@ const userPicks = computed(() => {
 })
 
 const playerStandings = computed(() => {
-  const standingsMap = new Map<string, { userId: string; name: string; totalToPar: number }>()
+  const standingsMap = new Map<string, { userId: string; name: string; totalToPar: number | null }>()
 
   for (const profile of profiles.value) {
-    standingsMap.set(profile.id, { userId: profile.id, name: profile.display_name, totalToPar: 0 })
+    // Get this player's picks
+    const playerPicks = draftPicks.value.filter(dp => dp.user_id === profile.id)
+    // Get scores for active golfers only
+    const activeScores = playerPicks
+      .map(pick => golferScores.value.find(gs => gs.golfer_id === pick.golfer_id))
+      .filter(score => score && (score.status === 'active' || score.to_par == null))
+      .filter(score => score?.to_par != null)
+      .sort((a, b) => a!.to_par! - b!.to_par!)
+
+    // Best 2 of active golfers
+    const best2 = activeScores.slice(0, 2)
+    const total = best2.length > 0 ? best2.reduce((sum, s) => sum + s!.to_par!, 0) : null
+
+    standingsMap.set(profile.id, { userId: profile.id, name: profile.display_name, totalToPar: total })
   }
 
-  for (const pick of draftPicks.value) {
-    const score = golferScores.value.find(gs => gs.golfer_id === pick.golfer_id)
-    const entry = standingsMap.get(pick.user_id)
-    if (entry && score?.to_par != null) {
-      entry.totalToPar += score.to_par
-    }
-  }
-
-  return Array.from(standingsMap.values()).sort((a, b) => a.totalToPar - b.totalToPar)
+  return Array.from(standingsMap.values()).sort((a, b) => (a.totalToPar ?? 999) - (b.totalToPar ?? 999))
 })
 
 const topThree = computed(() => playerStandings.value.slice(0, 3))
 const winner = computed(() => playerStandings.value[0] ?? null)
 
-function formatScore(toPar: number): string {
+function formatScore(toPar: number | null): string {
+  if (toPar == null) return '--'
   if (toPar === 0) return 'E'
   return toPar > 0 ? `+${toPar}` : `${toPar}`
 }
@@ -126,6 +134,15 @@ function updateCountdown() {
   }
 }
 
+const startingDraft = ref(false)
+
+const allReady = computed(() => {
+  if (profiles.value.length === 0) return false
+  return profiles.value.every(p =>
+    readyChecks.value.some(rc => rc.user_id === p.id && rc.is_ready)
+  )
+})
+
 async function toggleReady() {
   if (!auth.user || !tournament.value || togglingReady.value) return
   togglingReady.value = true
@@ -139,8 +156,44 @@ async function toggleReady() {
       },
       { onConflict: 'tournament_id,user_id' }
     )
+
+    // Check if all players are now ready — auto-start
+    const newReady = !currentUserReady.value
+    if (newReady) {
+      const { data: checks } = await supabase
+        .from('ready_checks')
+        .select('*')
+        .eq('tournament_id', tournament.value.id)
+
+      const { data: allProfiles } = await supabase.from('profiles').select('id')
+
+      if (checks && allProfiles) {
+        const everyoneReady = allProfiles.every(p =>
+          checks.some(c => c.user_id === p.id && c.is_ready)
+        )
+        if (everyoneReady && allProfiles.length >= 1) {
+          await startDraft()
+        }
+      }
+    }
   } finally {
     togglingReady.value = false
+  }
+}
+
+async function startDraft() {
+  if (!tournament.value || startingDraft.value) return
+  startingDraft.value = true
+  try {
+    const { error } = await supabase.rpc('start_draft', {
+      p_tournament_id: tournament.value.id,
+    })
+    if (error) {
+      console.error('Failed to start draft:', error)
+      alert('Failed to start draft: ' + error.message)
+    }
+  } finally {
+    startingDraft.value = false
   }
 }
 
@@ -273,7 +326,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="p-4 max-w-lg mx-auto space-y-6">
+  <div class="p-4 sm:p-6 lg:p-8 max-w-lg md:max-w-2xl mx-auto space-y-6 pb-24">
     <!-- Loading -->
     <div v-if="loading" class="flex items-center justify-center py-20">
       <div class="animate-spin rounded-full h-10 w-10 border-4 border-augusta border-t-transparent"></div>
@@ -292,9 +345,9 @@ onUnmounted(() => {
       <!-- Countdown -->
       <div class="bg-augusta-gradient rounded-2xl p-6 text-center shadow-lg">
         <p class="text-cream/80 text-sm font-medium uppercase tracking-wide mb-3">Draft Night Countdown</p>
-        <div class="flex justify-center gap-3">
-          <div v-for="(val, key) in countdown" :key="key" class="bg-black/30 rounded-xl px-3 py-3 min-w-[60px]">
-            <span class="text-2xl font-bold text-gold-glow font-score">{{ String(val).padStart(2, '0') }}</span>
+        <div class="flex justify-center gap-2 sm:gap-3">
+          <div v-for="(val, key) in countdown" :key="key" class="bg-black/30 rounded-xl px-3 py-3 sm:px-4 sm:py-4 min-w-[56px] sm:min-w-[68px]">
+            <span class="text-2xl sm:text-3xl font-bold text-gold-glow font-score">{{ String(val).padStart(2, '0') }}</span>
             <p class="text-cream/60 text-[10px] uppercase mt-1">{{ key }}</p>
           </div>
         </div>
@@ -341,13 +394,24 @@ onUnmounted(() => {
       <button
         @click="toggleReady"
         :disabled="togglingReady"
-        class="w-full py-3.5 rounded-xl font-bold text-white text-lg transition-all active:scale-95"
+        class="w-full py-3.5 min-h-[48px] rounded-xl font-bold text-white text-lg transition-all active:scale-95"
         :class="currentUserReady
           ? 'bg-green-500 shadow-md shadow-green-500/30'
           : 'bg-gray-400 shadow-md shadow-gray-400/30'"
       >
         <span v-if="togglingReady" class="animate-pulse">Updating...</span>
         <span v-else>{{ currentUserReady ? "I'm Ready! &#10003;" : "I'm Ready" }}</span>
+      </button>
+
+      <!-- Manual Start Draft (when all ready) -->
+      <button
+        v-if="allReady && profiles.length >= 1"
+        @click="startDraft"
+        :disabled="startingDraft"
+        class="w-full py-3.5 rounded-xl font-bold text-white text-lg bg-augusta-gradient shadow-lg active:scale-95 transition-all"
+      >
+        <span v-if="startingDraft" class="animate-pulse">Starting Draft...</span>
+        <span v-else>Start the Draft!</span>
       </button>
 
       <!-- Golfer Field Link -->
@@ -418,7 +482,7 @@ onUnmounted(() => {
             </div>
             <span
               class="font-bold font-score"
-              :class="standing.totalToPar < 0 ? 'text-red-600' : standing.totalToPar > 0 ? 'text-gray-600' : 'text-dark'"
+              :class="(standing.totalToPar ?? 0) < 0 ? 'text-red-600' : (standing.totalToPar ?? 0) > 0 ? 'text-gray-600' : 'text-dark'"
             >
               {{ formatScore(standing.totalToPar) }}
             </span>
@@ -495,7 +559,7 @@ onUnmounted(() => {
             </div>
             <span
               class="font-bold font-score"
-              :class="standing.totalToPar < 0 ? 'text-red-600' : standing.totalToPar > 0 ? 'text-gray-600' : 'text-dark'"
+              :class="(standing.totalToPar ?? 0) < 0 ? 'text-red-600' : (standing.totalToPar ?? 0) > 0 ? 'text-gray-600' : 'text-dark'"
             >
               {{ formatScore(standing.totalToPar) }}
             </span>

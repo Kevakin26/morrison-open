@@ -2,6 +2,7 @@
 import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { supabase } from '@/lib/supabase'
 import { useAuthStore } from '@/stores/auth'
+
 import type { Database } from '@/types/database'
 import type { RealtimeChannel } from '@supabase/supabase-js'
 
@@ -35,10 +36,158 @@ const searchQuery = ref('')
 const selectedGolfer = ref<Golfer | null>(null)
 const pickLoading = ref(false)
 const pickError = ref('')
+const golferSortBy = ref<'ranking' | 'name'>('ranking')
+
+// Pick announcement
+const pickAnnouncement = ref<{ playerName: string; golferName: string; golferImage: string | null; pickNumber: number; nextPlayerName: string | null } | null>(null)
+
+// Lottery animation
+const showLottery = ref(false)
+const lotteryComplete = ref(false)
+const currentLotteryIndex = ref(-1)
+
+// Proxy drafting - admin mode
+const adminMode = ref(false)
+const proxyPlayerIds = ref<Set<string>>(new Set(
+  JSON.parse(localStorage.getItem('morrison-proxy-ids') || '[]')
+))
+const proxyName = ref('')
+const addingProxy = ref(false)
+
+function saveProxyIds() {
+  localStorage.setItem('morrison-proxy-ids', JSON.stringify([...proxyPlayerIds.value]))
+}
+
+
+async function addProxyPlayer() {
+  if (!proxyName.value.trim() || addingProxy.value || !tournament.value) return
+  addingProxy.value = true
+  try {
+    const { data: newId, error } = await supabase.rpc('create_proxy_player', {
+      p_display_name: proxyName.value.trim(),
+      p_tournament_id: tournament.value.id,
+    })
+    if (error) {
+      console.error('Failed to add player:', error)
+      alert('Failed to add player: ' + error.message)
+      return
+    }
+    if (newId) {
+      proxyPlayerIds.value.add(newId as string)
+      saveProxyIds()
+    }
+    proxyName.value = ''
+    // Refresh profiles and ready checks
+    const [profilesRes, readyRes] = await Promise.all([
+      supabase.from('profiles').select('*'),
+      supabase.from('ready_checks').select('*').eq('tournament_id', tournament.value.id),
+    ])
+    if (profilesRes.data) profiles.value = profilesRes.data
+    if (readyRes.data) readyChecks.value = readyRes.data
+  } finally {
+    addingProxy.value = false
+  }
+}
+
+async function toggleReadyFor(userId: string) {
+  if (!tournament.value) return
+  const current = readyChecks.value.find(rc => rc.user_id === userId)
+  await supabase.from('ready_checks').upsert(
+    { tournament_id: tournament.value.id, user_id: userId, is_ready: !(current?.is_ready) },
+    { onConflict: 'tournament_id,user_id' }
+  )
+  // Refresh
+  const { data } = await supabase.from('ready_checks').select('*').eq('tournament_id', tournament.value.id)
+  if (data) readyChecks.value = data
+}
+
+// Ready check state
+type ReadyCheck = Database['public']['Tables']['ready_checks']['Row']
+const readyChecks = ref<ReadyCheck[]>([])
+const togglingReady = ref(false)
+const startingDraft = ref(false)
+
+// Countdown
+const countdown = ref({ days: 0, hours: 0, minutes: 0, seconds: 0 })
+let countdownInterval: ReturnType<typeof setInterval> | null = null
+const DRAFT_DATE = new Date('2026-04-07T00:00:00Z') // April 6, 6:00 PM MST (America/Boise)
+
+const currentUserReady = computed(() => {
+  if (!auth.user) return false
+  return readyChecks.value.find(rc => rc.user_id === auth.user!.id)?.is_ready ?? false
+})
+
+const allReady = computed(() => {
+  if (profiles.value.length === 0) return false
+  return profiles.value.every(p =>
+    readyChecks.value.some(rc => rc.user_id === p.id && rc.is_ready)
+  )
+})
+
+const notReadyPlayers = computed(() => {
+  const readyIds = new Set(readyChecks.value.filter(rc => rc.is_ready).map(rc => rc.user_id))
+  return profiles.value.filter(p => !readyIds.has(p.id))
+})
+
+function isPlayerReady(playerId: string) {
+  return readyChecks.value.find(rc => rc.user_id === playerId)?.is_ready ?? false
+}
+
+function updateCountdown() {
+  const diff = Math.max(0, DRAFT_DATE.getTime() - Date.now())
+  countdown.value = {
+    days: Math.floor(diff / (1000 * 60 * 60 * 24)),
+    hours: Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60)),
+    minutes: Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60)),
+    seconds: Math.floor((diff % (1000 * 60)) / 1000),
+  }
+}
+
+async function toggleReady() {
+  if (!auth.user || !tournament.value || togglingReady.value) return
+  togglingReady.value = true
+  const newReady = !currentUserReady.value
+  try {
+    await supabase.from('ready_checks').upsert(
+      { tournament_id: tournament.value.id, user_id: auth.user.id, is_ready: newReady },
+      { onConflict: 'tournament_id,user_id' }
+    )
+    // After the upsert, check if we should auto-start
+    if (newReady) {
+      const { data: checks } = await supabase
+        .from('ready_checks')
+        .select('*')
+        .eq('tournament_id', tournament.value!.id)
+      const allProfilesReady = profiles.value.every(p =>
+        checks?.some(c => c.user_id === p.id && c.is_ready)
+      )
+      if (allProfilesReady && profiles.value.length >= 1) {
+        await startDraft()
+      }
+    }
+  } finally {
+    togglingReady.value = false
+  }
+}
+
+async function startDraft() {
+  if (!tournament.value || startingDraft.value) return
+  startingDraft.value = true
+  try {
+    const { error } = await supabase.rpc('start_draft', { p_tournament_id: tournament.value.id })
+    if (error) alert('Failed to start draft: ' + error.message)
+  } finally {
+    startingDraft.value = false
+  }
+}
 
 // Timer
 const timerSeconds = ref(0)
+const timerExpiredHandled = ref(false)
 let timerInterval: ReturnType<typeof setInterval> | null = null
+
+// Google Meet link — create one at https://meet.google.com and paste it here
+const MEET_LINK = 'https://meet.google.com/bjh-mhdh-svv'
 
 // Realtime channels
 const channels: RealtimeChannel[] = []
@@ -82,6 +231,12 @@ const isMyTurn = computed(() => {
   return auth.user?.id === currentPickUserId.value && draftState.value?.status === 'drafting'
 })
 
+const canPick = computed(() => {
+  if (!draftState.value || draftState.value.status !== 'drafting') return false
+  if (adminMode.value) return true
+  return isMyTurn.value
+})
+
 const profileMap = computed(() => {
   const map = new Map<string, Profile>()
   profiles.value.forEach(p => map.set(p.id, p))
@@ -104,13 +259,24 @@ const availableGolfers = computed(() => {
     .sort((a, b) => a.world_ranking - b.world_ranking)
 })
 
-const filteredGolfers = computed(() => {
-  if (!searchQuery.value.trim()) return availableGolfers.value
-  const q = searchQuery.value.toLowerCase().trim()
-  return availableGolfers.value.filter(g =>
-    g.name.toLowerCase().includes(q) ||
-    g.country.toLowerCase().includes(q)
-  )
+const sortedAvailableGolfers = computed(() => {
+  let list = availableGolfers.value
+  if (searchQuery.value.trim()) {
+    const q = searchQuery.value.toLowerCase().trim()
+    list = list.filter(g =>
+      g.name.toLowerCase().includes(q) ||
+      g.country.toLowerCase().includes(q)
+    )
+  }
+  if (golferSortBy.value === 'ranking') {
+    return [...list].sort((a, b) => (a.power_ranking ?? 999) - (b.power_ranking ?? 999))
+  } else {
+    return [...list].sort((a, b) => {
+      const lastA = a.name.split(' ').pop() || ''
+      const lastB = b.name.split(' ').pop() || ''
+      return lastA.localeCompare(lastB)
+    })
+  }
 })
 
 const myPicks = computed(() => {
@@ -178,6 +344,61 @@ const timerPercent = computed(() => {
   return Math.max(0, Math.min(100, (timerSeconds.value / totalTime) * 100))
 })
 
+const lotterySlots = computed(() => {
+  if (!draftState.value) return []
+  const order = draftState.value.draft_order
+  const seen = new Set<string>()
+  const names: string[] = []
+  for (const uid of order) {
+    if (seen.has(uid)) break
+    seen.add(uid)
+    const profile = profiles.value.find(p => p.id === uid)
+    names.push(profile?.display_name || 'Unknown')
+  }
+  return names
+})
+
+let lotteryInterval: ReturnType<typeof setInterval> | null = null
+
+function startLotteryAnimation() {
+  showLottery.value = true
+  lotteryComplete.value = false
+  currentLotteryIndex.value = -1
+
+  const totalSlots = lotterySlots.value.length
+  let i = 0
+  let audioCtx: AudioContext | null = null
+  try {
+    audioCtx = new AudioContext()
+  } catch { /* Web Audio not available */ }
+
+  lotteryInterval = setInterval(() => {
+    currentLotteryIndex.value = i
+    if (audioCtx) {
+      try {
+        const osc = audioCtx.createOscillator()
+        const gain = audioCtx.createGain()
+        osc.connect(gain)
+        gain.connect(audioCtx.destination)
+        osc.frequency.value = 600 + (i * 100)
+        gain.gain.value = 0.1
+        osc.start()
+        osc.stop(audioCtx.currentTime + 0.15)
+      } catch { /* ignore */ }
+    }
+
+    i++
+    if (i >= totalSlots) {
+      if (lotteryInterval) { clearInterval(lotteryInterval); lotteryInterval = null }
+      if (audioCtx) { audioCtx.close().catch(() => {}); audioCtx = null }
+      lotteryComplete.value = true
+      setTimeout(() => {
+        showLottery.value = false
+      }, 3000)
+    }
+  }, 2000)
+}
+
 // ─── Sound & Vibration ───
 
 function playNotificationTone() {
@@ -198,6 +419,7 @@ function playNotificationTone() {
 
     osc.start(ctx.currentTime)
     osc.stop(ctx.currentTime + 0.5)
+    osc.onended = () => ctx.close().catch(() => {})
   } catch {
     // Web Audio not available, silently ignore
   }
@@ -243,21 +465,23 @@ function updateTimer() {
 }
 
 async function handleTimerExpired() {
-  if (!tournament.value || pickLoading.value) return
-  // Only the current picker's client triggers auto_pick
-  if (!isMyTurn.value) return
-  stopTimer()
+  if (!tournament.value) return
+  if (pickLoading.value || timerExpiredHandled.value) return
+  timerExpiredHandled.value = true
+  pickLoading.value = true
   try {
     await supabase.rpc('auto_pick', { p_tournament_id: tournament.value.id })
-  } catch {
-    // Server-side will handle if multiple clients attempt
+  } catch (e) {
+    console.error('Auto-pick failed:', e)
+  } finally {
+    pickLoading.value = false
   }
 }
 
 // ─── Actions ───
 
 function selectGolfer(golfer: Golfer) {
-  if (!isMyTurn.value) return
+  if (!canPick.value) return
   selectedGolfer.value = golfer
 }
 
@@ -267,9 +491,14 @@ async function confirmPick() {
   pickError.value = ''
 
   try {
+    // In admin mode, pick on behalf of whoever's turn it is
+    const pickUserId = adminMode.value && currentPickUserId.value
+      ? currentPickUserId.value
+      : auth.user.id
+
     const { error } = await supabase.rpc('make_draft_pick', {
       p_tournament_id: tournament.value.id,
-      p_user_id: auth.user.id,
+      p_user_id: pickUserId,
       p_golfer_id: selectedGolfer.value.id,
     })
     if (error) throw error
@@ -340,17 +569,23 @@ async function fetchData() {
     return
   }
 
-  const [draftRes, picksRes, golfersRes, profilesRes] = await Promise.all([
+  const [draftRes, picksRes, golfersRes, profilesRes, readyRes] = await Promise.all([
     supabase.from('draft_state').select('*').eq('tournament_id', t.id).single(),
     supabase.from('draft_picks').select('*').eq('tournament_id', t.id),
     supabase.from('golfers').select('*').eq('is_active', true),
     supabase.from('profiles').select('*'),
+    supabase.from('ready_checks').select('*').eq('tournament_id', t.id),
   ])
 
   draftState.value = draftRes.data as unknown as DraftState | null
   draftPicks.value = picksRes.data ?? []
   golfers.value = golfersRes.data ?? []
   profiles.value = profilesRes.data ?? []
+  readyChecks.value = readyRes.data ?? []
+
+  // Start countdown
+  updateCountdown()
+  countdownInterval = setInterval(updateCountdown, 1000)
 
   loading.value = false
 }
@@ -387,14 +622,53 @@ function setupRealtimeSubscriptions() {
         if (selectedGolfer.value && newPick.golfer_id === selectedGolfer.value.id) {
           selectedGolfer.value = null
         }
+        // Trigger pick announcement
+        const picker = profiles.value.find(p => p.id === newPick.user_id)
+        const golfer = golfers.value.find(g => g.id === newPick.golfer_id)
+        if (picker && golfer) {
+          // Figure out who picks next using pick_number (1-indexed) as the next index
+          let nextPlayerName: string | null = null
+          if (draftState.value && draftState.value.draft_order) {
+            const nextIndex = newPick.pick_number // pick_number is 1-indexed, so it equals the next index
+            const nextUserId = draftState.value.draft_order[nextIndex]
+            if (nextUserId) {
+              const nextProfile = profiles.value.find(p => p.id === nextUserId)
+              nextPlayerName = nextProfile?.display_name ?? null
+            }
+          }
+          pickAnnouncement.value = {
+            playerName: picker.display_name,
+            golferName: golfer.name,
+            golferImage: golfer.image_url,
+            pickNumber: newPick.pick_number,
+            nextPlayerName,
+          }
+          setTimeout(() => { pickAnnouncement.value = null }, 4000)
+        }
       }
     )
     .subscribe()
   channels.push(draftPicksChannel)
+
+  const readyChannel = supabase
+    .channel('draft-view-ready')
+    .on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'ready_checks', filter: `tournament_id=eq.${tournament.value.id}` },
+      async () => {
+        if (!tournament.value) return
+        const { data } = await supabase.from('ready_checks').select('*').eq('tournament_id', tournament.value.id)
+        if (data) readyChecks.value = data
+      }
+    )
+    .subscribe()
+  channels.push(readyChannel)
 }
 
 function cleanup() {
   stopTimer()
+  if (countdownInterval) { clearInterval(countdownInterval); countdownInterval = null }
+  if (lotteryInterval) { clearInterval(lotteryInterval); lotteryInterval = null }
   channels.forEach(ch => supabase.removeChannel(ch))
   channels.length = 0
 }
@@ -410,15 +684,35 @@ watch(isMyTurn, (val) => {
   }
 })
 
+// When draft starts, show lottery and stop countdown
+watch(() => draftState.value?.status, (newStatus, oldStatus) => {
+  if (newStatus === 'drafting' && oldStatus !== 'drafting') {
+    if (countdownInterval) { clearInterval(countdownInterval); countdownInterval = null }
+    startLotteryAnimation()
+  }
+})
+
+// Auto-enable admin mode for proxy players, auto-disable for real players
+watch(currentPickUserId, (userId) => {
+  if (!userId) return
+  if (proxyPlayerIds.value.has(userId)) {
+    adminMode.value = true
+  } else {
+    adminMode.value = false
+  }
+})
+
 // Watch draft state to manage timer
-watch(draftState, (val) => {
+watch(() => draftState.value?.pick_deadline, () => {
+  timerExpiredHandled.value = false
+  const val = draftState.value
   if (val?.status === 'drafting' && val.pick_deadline) {
     startTimer()
   } else {
     stopTimer()
     timerSeconds.value = 0
   }
-}, { deep: true })
+})
 
 onMounted(async () => {
   await fetchData()
@@ -438,222 +732,425 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="p-4 max-w-lg mx-auto space-y-4 pb-8">
+  <div class="min-h-screen bg-golf-draft">
+  <div class="p-4 sm:p-6 lg:p-8 mx-auto space-y-4 pb-24" :class="draftState?.status === 'drafting' && !showLottery ? 'max-w-lg md:max-w-3xl lg:max-w-6xl' : 'max-w-lg md:max-w-2xl lg:max-w-3xl'">
     <!-- Loading -->
     <div v-if="loading" class="flex items-center justify-center py-20">
       <div class="animate-spin rounded-full h-10 w-10 border-4 border-augusta border-t-transparent"></div>
     </div>
 
-    <!-- ==================== WAITING ==================== -->
+    <!-- ==================== WAITING / PRE-DRAFT ==================== -->
     <template v-else-if="!draftState || draftState.status === 'waiting'">
-      <div class="text-center py-16 space-y-4">
-        <div class="bg-augusta-gradient rounded-2xl p-8 shadow-lg">
-          <h1 class="text-2xl font-bold text-gold-glow tracking-wider">THE MORRISON OPEN DRAFT</h1>
-          <p class="text-cream/80 mt-3 text-sm">Waiting for the draft to begin...</p>
-          <div class="mt-6">
-            <div class="animate-pulse flex justify-center gap-2">
-              <span class="w-2.5 h-2.5 bg-gold rounded-full"></span>
-              <span class="w-2.5 h-2.5 bg-gold rounded-full animation-delay-200"></span>
-              <span class="w-2.5 h-2.5 bg-gold rounded-full animation-delay-400"></span>
+      <!-- Header -->
+      <div class="bg-augusta-gradient rounded-2xl p-6 shadow-lg text-center">
+        <img src="/masters-logo.png" alt="The Masters" class="h-12 sm:h-16 mx-auto mb-2" />
+        <h1 class="text-2xl font-bold text-gold-glow tracking-wider">THE MORRISON OPEN</h1>
+        <p class="text-cream/80 mt-1 text-sm">Draft Night &middot; Monday, April 6 &middot; 6:00 PM MST</p>
+
+        <!-- Countdown -->
+        <div class="flex justify-center gap-2 sm:gap-4 mt-4">
+          <div v-for="(val, label) in { Days: countdown.days, Hrs: countdown.hours, Min: countdown.minutes, Sec: countdown.seconds }" :key="label" class="text-center">
+            <div class="bg-white/15 rounded-lg px-3 py-2 sm:px-5 sm:py-3 md:px-6 md:py-4 min-w-[56px] sm:min-w-[72px] md:min-w-[80px]">
+              <span class="text-2xl sm:text-3xl md:text-4xl font-bold font-score text-white">{{ String(val).padStart(2, '0') }}</span>
             </div>
+            <span class="text-cream/50 text-[10px] sm:text-xs mt-1 block uppercase">{{ label }}</span>
           </div>
         </div>
-        <router-link
-          to="/dashboard"
-          class="inline-block text-augusta font-semibold text-sm hover:underline"
+
+        <!-- Google Meet -->
+        <a
+          :href="MEET_LINK"
+          target="_blank"
+          class="mt-4 inline-flex items-center gap-2 bg-white/20 hover:bg-white/30 text-white text-sm sm:text-base font-semibold px-5 py-2.5 sm:px-6 sm:py-3 rounded-xl transition-colors shadow-md min-h-[44px]"
         >
-          &larr; Back to Dashboard
-        </router-link>
+          <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 10l5-3v10l-5-3"/><rect x="2" y="6" width="13" height="12" rx="2"/></svg>
+          Join Google Meet
+        </a>
+      </div>
+
+      <!-- Players & Ready Status -->
+      <div class="bg-white rounded-2xl shadow-md p-5">
+        <h2 class="font-bold text-dark text-lg mb-3">Players</h2>
+        <div class="space-y-2">
+          <button
+            v-for="profile in profiles"
+            :key="profile.id"
+            @click="profile.id === auth.user?.id ? toggleReady() : (proxyPlayerIds.has(profile.id) ? toggleReadyFor(profile.id) : undefined)"
+            class="w-full flex items-center justify-between py-2.5 px-3 rounded-lg cursor-pointer transition-colors min-h-[44px]"
+            :class="isPlayerReady(profile.id) ? 'bg-green-50 hover:bg-green-100' : 'bg-gray-50 hover:bg-gray-100'"
+          >
+            <span class="font-medium text-dark">{{ profile.display_name }}</span>
+            <span v-if="isPlayerReady(profile.id)" class="text-green-500 font-bold text-sm">Ready</span>
+            <span v-else class="text-gray-400 text-sm">Tap to ready</span>
+          </button>
+        </div>
+
+        <div v-if="notReadyPlayers.length > 0" class="mt-3 text-sm text-dark/50">
+          Waiting for: {{ notReadyPlayers.map(p => p.display_name).join(', ') }}
+        </div>
+        <div v-else class="mt-3 text-sm text-green-600 font-medium">
+          All players ready!
+        </div>
+      </div>
+
+      <!-- Add Player -->
+      <div class="bg-white rounded-2xl shadow-md p-5">
+        <h3 class="font-bold text-dark text-sm mb-1">Add a Player</h3>
+        <p class="text-dark/40 text-xs mb-3">Drafting on someone's behalf? Add them here.</p>
+        <div class="flex gap-2">
+          <input
+            v-model="proxyName"
+            type="text"
+            placeholder="Their name"
+            class="flex-1 px-3 py-2 rounded-lg border border-dark/15 text-sm min-h-[44px] focus:outline-none focus:ring-2 focus:ring-augusta/30"
+            @keyup.enter="addProxyPlayer"
+          />
+          <button
+            @click="addProxyPlayer"
+            :disabled="!proxyName.trim() || addingProxy"
+            class="bg-augusta text-white px-4 py-2 rounded-lg text-sm font-semibold min-h-[44px] disabled:opacity-50 cursor-pointer"
+          >
+            {{ addingProxy ? '...' : 'Add' }}
+          </button>
+        </div>
+      </div>
+
+      <!-- Ready Toggle (for yourself) -->
+      <button
+        @click="toggleReady"
+        :disabled="togglingReady"
+        class="w-full py-3.5 min-h-[48px] rounded-xl font-bold text-white text-lg transition-all active:scale-95"
+        :class="currentUserReady ? 'bg-gold shadow-md shadow-gold/30 text-dark' : 'bg-augusta shadow-md shadow-augusta/30'"
+      >
+        <span v-if="togglingReady" class="animate-pulse">Updating...</span>
+        <span v-else>{{ currentUserReady ? "I'm Ready!" : "I'm Ready" }}</span>
+      </button>
+
+      <!-- Start Draft Button -->
+      <button
+        v-if="allReady && profiles.length >= 1"
+        @click="startDraft"
+        :disabled="startingDraft"
+        class="w-full py-4 min-h-[52px] rounded-xl font-bold text-white text-xl bg-augusta-gradient shadow-lg active:scale-95 transition-all"
+      >
+        <span v-if="startingDraft" class="animate-pulse">Starting Draft...</span>
+        <span v-else>Start the Draft!</span>
+      </button>
+
+      <!-- Browse Field Link -->
+      <router-link
+        to="/golfers"
+        class="block w-full py-3 rounded-xl font-semibold text-augusta text-center border-2 border-augusta/20 hover:bg-augusta/5 transition-colors"
+      >
+        Browse the Field &rarr;
+      </router-link>
+    </template>
+
+    <!-- ==================== LOTTERY ==================== -->
+    <template v-else-if="draftState.status === 'drafting' && showLottery">
+      <div class="text-center space-y-6">
+        <div class="bg-augusta-gradient rounded-2xl p-6 sm:p-8 shadow-lg">
+          <img src="/masters-logo.png" alt="The Masters" class="h-14 sm:h-16 mx-auto mb-3" />
+          <h1 class="text-2xl sm:text-3xl font-bold text-gold-glow tracking-wider">DRAFT ORDER</h1>
+          <p class="text-cream/70 text-sm mt-1">Drawing names...</p>
+        </div>
+
+        <div class="space-y-3">
+          <div
+            v-for="(slot, index) in lotterySlots"
+            :key="index"
+            class="bg-white rounded-xl shadow-md p-4 sm:p-5 flex items-center gap-4 transition-all duration-500"
+            :class="index <= currentLotteryIndex ? 'scale-100 opacity-100' : 'scale-95 opacity-50'"
+          >
+            <div
+              class="w-12 h-12 sm:w-14 sm:h-14 rounded-full flex items-center justify-center font-bold font-score text-xl sm:text-2xl shrink-0"
+              :class="index <= currentLotteryIndex ? 'bg-gold text-dark' : 'bg-gray-200 text-gray-400'"
+            >
+              {{ index + 1 }}
+            </div>
+            <div class="flex-1 text-left">
+              <p class="text-xs text-dark/40 uppercase tracking-wider">
+                {{ index === 0 ? '1st Pick' : index === 1 ? '2nd Pick' : index === 2 ? '3rd Pick' : `${index + 1}th Pick` }}
+              </p>
+              <p
+                class="text-xl sm:text-2xl font-bold transition-all duration-300"
+                :class="index <= currentLotteryIndex ? 'text-dark' : 'text-gray-300'"
+              >
+                {{ index <= currentLotteryIndex ? slot : '???' }}
+              </p>
+            </div>
+            <span v-if="index <= currentLotteryIndex" class="text-2xl animate-bounce">🏌️</span>
+          </div>
+        </div>
+
+        <p v-if="lotteryComplete" class="text-dark/50 text-sm animate-pulse mt-2">Starting draft...</p>
       </div>
     </template>
 
     <!-- ==================== DRAFTING ==================== -->
-    <template v-else-if="draftState.status === 'drafting'">
+    <template v-else-if="draftState.status === 'drafting' && !showLottery">
+      <!-- Pick Announcement Overlay -->
+      <Transition
+        enter-active-class="transition-all duration-500 ease-out"
+        enter-from-class="opacity-0 scale-90"
+        enter-to-class="opacity-100 scale-100"
+        leave-active-class="transition-all duration-300 ease-in"
+        leave-from-class="opacity-100 scale-100"
+        leave-to-class="opacity-0 scale-90"
+      >
+        <div v-if="pickAnnouncement" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60" @click="pickAnnouncement = null">
+          <div class="bg-white rounded-3xl shadow-2xl p-8 max-w-sm w-full text-center">
+            <p class="text-dark/50 text-sm uppercase tracking-wider font-medium">Pick #{{ pickAnnouncement.pickNumber }}</p>
+            <p class="text-augusta font-bold text-lg mt-1">{{ pickAnnouncement.playerName }} selects</p>
+            <img v-if="pickAnnouncement.golferImage" :src="pickAnnouncement.golferImage" class="w-24 h-24 rounded-full mx-auto my-4 object-cover shadow-lg" />
+            <p class="text-3xl font-bold text-dark">{{ pickAnnouncement.golferName }}</p>
+            <div v-if="pickAnnouncement.nextPlayerName" class="mt-4 pt-4 border-t border-dark/10">
+              <p class="text-dark/40 text-xs uppercase tracking-wider">Up Next</p>
+              <p class="text-augusta font-bold text-lg flex items-center justify-center gap-2">
+                <span class="animate-pulse">&#9200;</span>
+                {{ pickAnnouncement.nextPlayerName }}
+              </p>
+            </div>
+          </div>
+        </div>
+      </Transition>
+
       <!-- Draft Header -->
-      <div class="bg-augusta-gradient rounded-2xl p-4 shadow-lg text-center">
-        <h1 class="text-xl font-bold text-gold-glow tracking-wider">THE MORRISON OPEN DRAFT</h1>
+      <div class="bg-augusta-gradient rounded-2xl p-4 sm:p-6 shadow-lg text-center">
+        <img src="/masters-logo.png" alt="The Masters" class="h-12 sm:h-16 mx-auto mb-2" />
+        <h1 class="text-xl sm:text-2xl font-bold text-gold-glow tracking-wider">THE MORRISON OPEN DRAFT</h1>
         <p class="text-cream/70 text-sm mt-1">
           Round {{ currentRound }} of {{ totalRounds }}
           &middot; Pick {{ draftState.current_pick_index + 1 }} of {{ totalPicks }}
         </p>
+        <a
+          :href="MEET_LINK"
+          target="_blank"
+          class="mt-3 inline-flex items-center gap-2 bg-white/20 hover:bg-white/30 text-white text-sm sm:text-base font-semibold px-5 py-2.5 rounded-xl transition-colors shadow-md min-h-[44px]"
+        >
+          <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 10l5-3v10l-5-3"/><rect x="2" y="6" width="13" height="12" rx="2"/></svg>
+          Join Google Meet
+        </a>
+        <label class="flex items-center justify-center gap-2 text-cream/70 text-xs mt-3 cursor-pointer">
+          <input type="checkbox" v-model="adminMode" class="rounded" />
+          Draft Admin (pick for others)
+        </label>
       </div>
 
-      <!-- Timer Section -->
-      <div
-        class="rounded-2xl p-5 shadow-md text-center"
-        :class="isMyTurn ? 'bg-green-50 border-2 border-green-400' : 'bg-white'"
-      >
-        <!-- Whose turn -->
-        <p v-if="isMyTurn" class="text-green-600 font-bold text-lg uppercase tracking-wide animate-pulse">
-          YOUR PICK!
-        </p>
-        <p v-else class="text-gray-500 text-sm font-medium">
-          {{ currentPickUser?.display_name ?? 'Unknown' }}'s Pick
-        </p>
-
-        <!-- Timer display -->
-        <div class="mt-3">
-          <span
-            class="text-5xl font-bold font-score"
-            :class="timerSeconds <= 10 ? 'text-red-600 animate-pulse' : isMyTurn ? 'text-green-700' : 'text-dark'"
-          >
-            {{ timerDisplay }}
-          </span>
-        </div>
-
-        <!-- Timer bar -->
-        <div class="mt-4 h-2 bg-gray-200 rounded-full overflow-hidden">
-          <div
-            class="h-full rounded-full transition-all duration-1000 ease-linear"
-            :class="timerPercent <= 20 ? 'bg-red-500' : timerPercent <= 50 ? 'bg-yellow-500' : 'bg-green-500'"
-            :style="{ width: timerPercent + '%' }"
-          ></div>
-        </div>
-      </div>
-
-      <!-- Pick Interface -->
-      <div class="bg-white rounded-2xl shadow-md overflow-hidden">
-        <!-- Selected golfer confirmation -->
-        <div v-if="selectedGolfer && isMyTurn" class="p-4 bg-gold/10 border-b border-gold/30">
-          <p class="text-sm text-gray-500 mb-2">Confirm your pick:</p>
-          <div class="flex items-center justify-between">
-            <div class="flex items-center gap-3">
-              <span class="text-2xl">{{ countryFlag(selectedGolfer.country) }}</span>
-              <div>
-                <p class="font-bold text-dark text-lg">{{ selectedGolfer.name }}</p>
-                <p class="text-gray-400 text-xs">
-                  #{{ selectedGolfer.world_ranking }} &middot; {{ selectedGolfer.odds ?? '--' }}
-                </p>
-              </div>
-            </div>
-            <button
-              @click="cancelSelection"
-              class="text-gray-400 hover:text-gray-600 text-xl px-2"
-              :disabled="pickLoading"
-            >
-              &#10005;
-            </button>
-          </div>
-          <button
-            @click="confirmPick"
-            :disabled="pickLoading"
-            class="w-full mt-3 py-3 rounded-xl font-bold text-white text-lg bg-augusta-gradient shadow-md active:scale-95 transition-transform disabled:opacity-50"
-          >
-            <span v-if="pickLoading" class="animate-pulse">Picking...</span>
-            <span v-else>Confirm Pick: {{ selectedGolfer.name }}</span>
-          </button>
-          <p v-if="pickError" class="text-red-500 text-sm mt-2 text-center">{{ pickError }}</p>
-        </div>
-
-        <!-- Header + Search -->
-        <div class="p-4 border-b border-gray-100">
-          <div class="flex items-center justify-between mb-3">
-            <h2 class="font-bold text-dark text-lg">
-              {{ isMyTurn ? 'Select a Golfer' : 'Available Golfers' }}
-            </h2>
-            <span class="text-xs text-gray-400 bg-gray-100 px-2 py-1 rounded-full">
-              {{ availableGolfers.length }} left
-            </span>
-          </div>
-          <div class="relative">
-            <input
-              v-model="searchQuery"
-              type="text"
-              placeholder="Search golfers..."
-              class="w-full pl-9 pr-4 py-2.5 rounded-xl bg-gray-50 border border-gray-200 text-dark text-sm focus:outline-none focus:ring-2 focus:ring-augusta/30 focus:border-augusta"
-            />
-            <svg class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
-            </svg>
-          </div>
-          <p v-if="!isMyTurn" class="text-gray-400 text-xs mt-2 italic">
-            Waiting for {{ currentPickUser?.display_name ?? 'Unknown' }} to pick...
-          </p>
-        </div>
-
-        <!-- Golfer list -->
-        <div class="max-h-80 overflow-y-auto divide-y divide-gray-50">
-          <div v-if="filteredGolfers.length === 0" class="p-6 text-center text-gray-400 text-sm">
-            No golfers match your search.
-          </div>
-          <button
-            v-for="golfer in filteredGolfers"
-            :key="golfer.id"
-            @click="selectGolfer(golfer)"
-            :disabled="!isMyTurn || pickLoading"
-            class="w-full flex items-center gap-3 px-4 py-3 text-left transition-colors"
-            :class="[
-              isMyTurn ? 'hover:bg-augusta/5 active:bg-augusta/10 cursor-pointer' : 'cursor-default',
-              selectedGolfer?.id === golfer.id ? 'bg-gold/10' : '',
-            ]"
-          >
-            <span class="text-lg flex-shrink-0">{{ countryFlag(golfer.country) }}</span>
-            <div class="flex-1 min-w-0">
-              <p class="font-medium text-dark text-sm truncate">{{ golfer.name }}</p>
-              <p class="text-gray-400 text-xs">{{ golfer.country }}</p>
-            </div>
-            <div class="text-right flex-shrink-0">
-              <p class="text-xs font-bold text-dark">#{{ golfer.world_ranking }}</p>
-              <p class="text-xs text-gray-400">{{ golfer.odds ?? '--' }}</p>
-            </div>
-          </button>
-        </div>
-      </div>
-
-      <!-- Draft Board -->
-      <div class="bg-white rounded-2xl shadow-md p-4">
-        <h2 class="font-bold text-dark text-lg mb-3">Draft Board</h2>
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <!-- Left: Timer + AI + Pick UI -->
         <div class="space-y-4">
-          <div v-for="round in draftBoard" :key="round.round">
-            <div class="flex items-center gap-2 mb-2">
-              <span class="text-xs font-bold text-augusta uppercase tracking-wide">Round {{ round.round }}</span>
-              <span v-if="round.reversed" class="text-[10px] text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded">
-                &#8635; Snake
-              </span>
-              <div class="flex-1 border-t border-gray-100"></div>
+          <!-- Timer Section -->
+          <div
+            class="rounded-2xl p-5 shadow-md text-center"
+            :class="canPick ? 'bg-green-50 border-2 border-green-400' : 'bg-white'"
+          >
+            <!-- Whose turn -->
+            <p v-if="isMyTurn" class="text-green-600 font-bold text-lg uppercase tracking-wide animate-pulse">
+              YOUR PICK!
+            </p>
+            <p v-else-if="adminMode" class="text-green-600 font-bold text-lg uppercase tracking-wide">
+              PICKING FOR {{ currentPickUser?.display_name?.toUpperCase() ?? 'UNKNOWN' }}
+            </p>
+            <div v-else class="mt-2">
+              <p class="text-dark/40 text-xs uppercase tracking-wider">On the Clock</p>
+              <p class="text-dark font-bold text-xl flex items-center justify-center gap-2">
+                <span class="animate-pulse">⏰</span>
+                {{ currentPickUser?.display_name ?? 'Unknown' }}
+              </p>
             </div>
-            <div class="space-y-1.5">
+
+            <!-- Timer display -->
+            <div class="mt-3">
+              <span
+                class="text-5xl font-bold font-score"
+                :class="timerSeconds <= 10 ? 'text-red-600 animate-pulse' : canPick ? 'text-green-700' : 'text-dark'"
+              >
+                {{ timerDisplay }}
+              </span>
+            </div>
+
+            <!-- Timer bar -->
+            <div class="mt-4 h-2 bg-gray-200 rounded-full overflow-hidden">
               <div
-                v-for="slot in round.slots"
-                :key="slot.pickNumber"
-                class="flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition-all"
+                class="h-full rounded-full transition-all duration-1000 ease-linear"
+                :class="timerPercent <= 20 ? 'bg-red-500' : timerPercent <= 50 ? 'bg-yellow-500' : 'bg-green-500'"
+                :style="{ width: timerPercent + '%' }"
+              ></div>
+            </div>
+          </div>
+
+          <!-- Pick Interface -->
+          <div class="bg-white rounded-2xl shadow-md overflow-hidden">
+            <!-- Selected golfer confirmation -->
+            <div v-if="selectedGolfer && canPick" class="p-4 bg-gold/10 border-b border-gold/30">
+              <p class="text-sm text-gray-500 mb-2">Confirm your pick:</p>
+              <div class="flex items-center justify-between">
+                <div class="flex items-center gap-3">
+                  <span class="text-2xl">{{ countryFlag(selectedGolfer.country) }}</span>
+                  <div>
+                    <p class="font-bold text-dark text-lg">{{ selectedGolfer.name }}</p>
+                    <p class="text-gray-400 text-xs">
+                      #{{ selectedGolfer.world_ranking }} &middot; {{ selectedGolfer.odds ?? '--' }}
+                    </p>
+                  </div>
+                </div>
+                <button
+                  @click="cancelSelection"
+                  class="text-gray-400 hover:text-gray-600 text-xl px-2"
+                  :disabled="pickLoading"
+                >
+                  &#10005;
+                </button>
+              </div>
+              <button
+                @click="confirmPick"
+                :disabled="pickLoading"
+                class="w-full mt-3 py-3 rounded-xl font-bold text-white text-lg bg-augusta-gradient shadow-md active:scale-95 transition-transform disabled:opacity-50"
+              >
+                <span v-if="pickLoading" class="animate-pulse">Picking...</span>
+                <span v-else>Confirm Pick: {{ selectedGolfer.name }}</span>
+              </button>
+              <p v-if="pickError" class="text-red-500 text-sm mt-2 text-center">{{ pickError }}</p>
+            </div>
+
+            <!-- Header + Search + Sort -->
+            <div class="p-4 border-b border-gray-100">
+              <div class="flex items-center justify-between mb-3">
+                <h2 class="font-bold text-dark text-lg">
+                  {{ canPick ? 'Select a Golfer' : 'Available Golfers' }}
+                </h2>
+                <span class="text-xs text-gray-400 bg-gray-100 px-2 py-1 rounded-full">
+                  {{ availableGolfers.length }} left
+                </span>
+              </div>
+              <!-- Sort toggle -->
+              <div class="flex gap-2 mb-3">
+                <button
+                  @click="golferSortBy = 'ranking'"
+                  class="px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors"
+                  :class="golferSortBy === 'ranking' ? 'bg-augusta text-white' : 'bg-gray-100 text-dark/60 hover:bg-gray-200'"
+                >
+                  Power Ranking
+                </button>
+                <button
+                  @click="golferSortBy = 'name'"
+                  class="px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors"
+                  :class="golferSortBy === 'name' ? 'bg-augusta text-white' : 'bg-gray-100 text-dark/60 hover:bg-gray-200'"
+                >
+                  A-Z (Last Name)
+                </button>
+              </div>
+              <div class="relative">
+                <input
+                  v-model="searchQuery"
+                  type="text"
+                  placeholder="Search golfers..."
+                  class="w-full pl-9 pr-4 py-2.5 rounded-xl bg-gray-50 border border-gray-200 text-dark text-sm focus:outline-none focus:ring-2 focus:ring-augusta/30 focus:border-augusta"
+                />
+                <svg class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+                </svg>
+              </div>
+              <p v-if="!canPick" class="text-gray-400 text-xs mt-2 italic">
+                Waiting for {{ currentPickUser?.display_name ?? 'Unknown' }} to pick...
+              </p>
+            </div>
+
+            <!-- Golfer list -->
+            <div class="max-h-80 sm:max-h-96 overflow-y-auto overscroll-contain divide-y divide-gray-50">
+              <div v-if="sortedAvailableGolfers.length === 0" class="p-6 text-center text-gray-400 text-sm">
+                No golfers match your search.
+              </div>
+              <button
+                v-for="golfer in sortedAvailableGolfers"
+                :key="golfer.id"
+                @click="selectGolfer(golfer)"
+                :disabled="!canPick || pickLoading"
+                class="w-full flex items-center gap-3 px-4 py-3 min-h-[48px] text-left transition-colors"
                 :class="[
-                  slot.isCurrent ? 'bg-green-50 border border-green-300 animate-pulse' : '',
-                  slot.isPicked ? 'bg-gray-50' : '',
-                  !slot.isPicked && !slot.isCurrent ? 'bg-gray-50/50' : '',
+                  canPick ? 'hover:bg-augusta/5 active:bg-augusta/10 cursor-pointer' : 'cursor-default',
+                  selectedGolfer?.id === golfer.id ? 'bg-gold/10' : '',
                 ]"
               >
-                <span class="w-6 text-center text-xs font-bold font-score text-gray-400">
-                  {{ slot.pickNumber }}
-                </span>
-                <span class="w-24 truncate font-medium" :class="slot.isCurrent ? 'text-green-700' : 'text-dark'">
-                  {{ slot.userName }}
-                </span>
-                <span class="flex-1 text-right truncate" :class="slot.isPicked ? 'text-dark font-medium' : 'text-gray-300'">
-                  {{ slot.golfer ? slot.golfer.name : (slot.isCurrent ? '...' : '--') }}
-                </span>
-              </div>
+                <img
+                  v-if="golfer.image_url"
+                  :src="golfer.image_url"
+                  :alt="golfer.name"
+                  class="w-10 h-10 sm:w-12 sm:h-12 rounded-full object-cover bg-cream flex-shrink-0"
+                />
+                <span v-else class="text-lg flex-shrink-0 w-10 h-10 sm:w-12 sm:h-12 rounded-full bg-augusta/10 flex items-center justify-center">{{ countryFlag(golfer.country) }}</span>
+                <div class="flex-1 min-w-0">
+                  <p class="font-medium text-dark text-sm sm:text-base truncate">{{ golfer.name }}</p>
+                  <p class="text-gray-400 text-xs">{{ countryFlag(golfer.country) }} {{ golfer.country }}</p>
+                </div>
+                <div class="text-right flex-shrink-0">
+                  <p class="text-xs font-bold text-dark">#{{ golfer.world_ranking }}</p>
+                  <p class="text-xs text-gray-400">{{ golfer.odds ?? '--' }}</p>
+                </div>
+              </button>
             </div>
           </div>
         </div>
-      </div>
 
-      <!-- Your Team Summary -->
-      <div class="bg-white rounded-2xl shadow-md p-4">
-        <h2 class="font-bold text-dark text-lg mb-3">Your Team</h2>
-        <div v-if="myPicks.length === 0" class="text-gray-400 text-sm text-center py-4">
-          No picks yet
-        </div>
-        <div v-else class="space-y-2">
-          <div
-            v-for="(pick, idx) in myPicks"
-            :key="pick.id"
-            class="flex items-center gap-3 px-3 py-2 bg-augusta/5 rounded-xl"
-          >
-            <span class="text-sm font-bold font-score text-augusta w-6 text-center">{{ idx + 1 }}</span>
-            <span class="text-lg">{{ pick.golfer ? countryFlag(pick.golfer.country) : '' }}</span>
-            <span class="font-medium text-dark text-sm">{{ pick.golfer?.name ?? 'Unknown' }}</span>
-            <span class="ml-auto text-xs text-gray-400">#{{ pick.golfer?.world_ranking ?? '--' }}</span>
+        <!-- Right: Draft Board + Your Team -->
+        <div class="space-y-4">
+          <!-- Draft Board -->
+          <div class="bg-white rounded-2xl shadow-md p-4">
+            <h2 class="font-bold text-dark text-lg mb-3">Draft Board</h2>
+            <div class="space-y-4">
+              <div v-for="round in draftBoard" :key="round.round">
+                <div class="flex items-center gap-2 mb-2">
+                  <span class="text-xs font-bold text-augusta uppercase tracking-wide">Round {{ round.round }}</span>
+                  <span v-if="round.reversed" class="text-[10px] text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded">
+                    &#8635; Snake
+                  </span>
+                  <div class="flex-1 border-t border-gray-100"></div>
+                </div>
+                <div class="space-y-1.5">
+                  <div
+                    v-for="slot in round.slots"
+                    :key="slot.pickNumber"
+                    class="flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition-all"
+                    :class="[
+                      slot.isCurrent ? 'bg-green-50 border border-green-300 animate-pulse' : '',
+                      slot.isPicked ? 'bg-gray-50' : '',
+                      !slot.isPicked && !slot.isCurrent ? 'bg-gray-50/50' : '',
+                    ]"
+                  >
+                    <span class="w-6 text-center text-xs font-bold font-score text-gray-400">
+                      {{ slot.pickNumber }}
+                    </span>
+                    <span class="w-20 sm:w-28 md:w-32 truncate font-medium text-sm" :class="slot.isCurrent ? 'text-green-700' : 'text-dark'">
+                      {{ slot.userName }}
+                    </span>
+                    <span class="flex-1 text-right truncate" :class="slot.isPicked ? 'text-dark font-medium' : 'text-gray-300'">
+                      {{ slot.golfer ? slot.golfer.name : (slot.isCurrent ? '...' : '--') }}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Your Team Summary -->
+          <div class="bg-white rounded-2xl shadow-md p-4">
+            <h2 class="font-bold text-dark text-lg mb-3">Your Team</h2>
+            <div v-if="myPicks.length === 0" class="text-gray-400 text-sm text-center py-4">
+              No picks yet
+            </div>
+            <div v-else class="space-y-2">
+              <div
+                v-for="(pick, idx) in myPicks"
+                :key="pick.id"
+                class="flex items-center gap-3 px-3 py-2 bg-augusta/5 rounded-xl"
+              >
+                <span class="text-sm font-bold font-score text-augusta w-6 text-center">{{ idx + 1 }}</span>
+                <span class="text-lg">{{ pick.golfer ? countryFlag(pick.golfer.country) : '' }}</span>
+                <span class="font-medium text-dark text-sm">{{ pick.golfer?.name ?? 'Unknown' }}</span>
+                <span class="ml-auto text-xs text-gray-400">#{{ pick.golfer?.world_ranking ?? '--' }}</span>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -728,13 +1225,6 @@ onUnmounted(() => {
       </router-link>
     </template>
   </div>
+  </div>
 </template>
 
-<style scoped>
-.animation-delay-200 {
-  animation-delay: 0.2s;
-}
-.animation-delay-400 {
-  animation-delay: 0.4s;
-}
-</style>

@@ -21,7 +21,6 @@ interface PlayerSide {
   profile: Profile
   golfers: MatchupGolfer[]
   combinedScore: number | null
-  eliminated: boolean
 }
 
 const auth = useAuthStore()
@@ -82,19 +81,18 @@ function buildPlayerSide(userId: string): PlayerSide | null {
     pg.counting = idx < 2
   })
 
-  const eliminated = active.length < 2
   let combinedScore: number | null = null
 
-  if (!eliminated) {
-    const counting = active.filter(pg => pg.counting)
-    combinedScore = counting.reduce((sum, pg) => sum + (pg.score?.to_par ?? 0), 0)
+  const counting = active.filter(pg => pg.counting)
+  const withScores = counting.filter(pg => pg.score?.to_par != null)
+  if (withScores.length > 0) {
+    combinedScore = withScores.reduce((sum, pg) => sum + pg.score!.to_par!, 0)
   }
 
   return {
     profile,
     golfers: [...active, ...inactive],
     combinedScore,
-    eliminated,
   }
 }
 
@@ -110,9 +108,6 @@ const player2Side = computed<PlayerSide | null>(() => {
 
 const leader = computed<'player1' | 'player2' | 'tied' | null>(() => {
   if (!player1Side.value || !player2Side.value) return null
-  if (player1Side.value.eliminated && player2Side.value.eliminated) return null
-  if (player1Side.value.eliminated) return 'player2'
-  if (player2Side.value.eliminated) return 'player1'
   if (player1Side.value.combinedScore == null || player2Side.value.combinedScore == null) return null
   if (player1Side.value.combinedScore < player2Side.value.combinedScore) return 'player1'
   if (player2Side.value.combinedScore < player1Side.value.combinedScore) return 'player2'
@@ -204,7 +199,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="p-4 max-w-2xl mx-auto pb-20">
+  <div class="p-4 sm:p-6 lg:p-8 max-w-2xl lg:max-w-3xl mx-auto pb-24">
     <!-- Loading -->
     <div v-if="loading" class="flex items-center justify-center py-20">
       <div class="animate-spin rounded-full h-10 w-10 border-4 border-augusta border-t-transparent"></div>
@@ -220,7 +215,7 @@ onUnmounted(() => {
         <div class="flex-1">
           <select
             v-model="player1Id"
-            class="w-full bg-white border border-dark/15 rounded-xl px-3 py-2.5 text-sm font-semibold text-dark focus:outline-none focus:ring-2 focus:ring-augusta/30 focus:border-augusta appearance-none cursor-pointer"
+            class="w-full bg-white border border-dark/15 rounded-xl px-3 py-2.5 min-h-[44px] text-sm font-semibold text-dark focus:outline-none focus:ring-2 focus:ring-augusta/30 focus:border-augusta appearance-none cursor-pointer"
           >
             <option v-for="p in profiles" :key="p.id" :value="p.id">
               {{ p.display_name }}
@@ -246,7 +241,7 @@ onUnmounted(() => {
         <div class="flex-1">
           <select
             v-model="player2Id"
-            class="w-full bg-white border border-dark/15 rounded-xl px-3 py-2.5 text-sm font-semibold text-dark focus:outline-none focus:ring-2 focus:ring-augusta/30 focus:border-augusta appearance-none cursor-pointer"
+            class="w-full bg-white border border-dark/15 rounded-xl px-3 py-2.5 min-h-[44px] text-sm font-semibold text-dark focus:outline-none focus:ring-2 focus:ring-augusta/30 focus:border-augusta appearance-none cursor-pointer"
           >
             <option v-for="p in profiles" :key="p.id" :value="p.id">
               {{ p.display_name }}
@@ -269,12 +264,11 @@ onUnmounted(() => {
               :class="{
                 'text-red-600': (player1Side.combinedScore ?? 0) < 0,
                 'text-dark': (player1Side.combinedScore ?? 0) >= 0,
-                'text-dark/30': player1Side.eliminated,
+                'text-dark/30': player1Side.combinedScore === null,
               }"
             >
-              {{ player1Side.eliminated ? '--' : formatToPar(player1Side.combinedScore) }}
+              {{ formatToPar(player1Side.combinedScore) }}
             </p>
-            <p v-if="player1Side.eliminated" class="text-xs font-bold text-red-600 mt-1">ELIMINATED</p>
           </div>
 
           <!-- Leader Indicator -->
@@ -320,18 +314,17 @@ onUnmounted(() => {
               :class="{
                 'text-red-600': (player2Side.combinedScore ?? 0) < 0,
                 'text-dark': (player2Side.combinedScore ?? 0) >= 0,
-                'text-dark/30': player2Side.eliminated,
+                'text-dark/30': player2Side.combinedScore === null,
               }"
             >
-              {{ player2Side.eliminated ? '--' : formatToPar(player2Side.combinedScore) }}
+              {{ formatToPar(player2Side.combinedScore) }}
             </p>
-            <p v-if="player2Side.eliminated" class="text-xs font-bold text-red-600 mt-1">ELIMINATED</p>
           </div>
         </div>
       </div>
 
       <!-- Side-by-Side Golfer Comparison -->
-      <div v-if="player1Side && player2Side" class="grid grid-cols-2 gap-3">
+      <div v-if="player1Side && player2Side" class="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <!-- Player 1 Column -->
         <div class="space-y-2">
           <p class="text-xs font-bold text-dark/40 uppercase tracking-wider text-center mb-2">
