@@ -110,7 +110,7 @@ const startingDraft = ref(false)
 // Countdown
 const countdown = ref({ days: 0, hours: 0, minutes: 0, seconds: 0 })
 let countdownInterval: ReturnType<typeof setInterval> | null = null
-const DRAFT_DATE = new Date('2026-04-07T01:00:00Z') // April 6, 6:00 PM MST (UTC-7)
+const DRAFT_DATE = new Date('2026-04-07T00:00:00Z') // April 6, 6:00 PM MDT (UTC-6)
 
 const currentUserReady = computed(() => {
   if (!auth.user) return false

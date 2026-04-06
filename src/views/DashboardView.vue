@@ -46,7 +46,7 @@ let countdownInterval: ReturnType<typeof setInterval> | null = null
 // Realtime channels
 const channels: RealtimeChannel[] = []
 
-const DRAFT_DATE = new Date('2026-04-07T01:00:00Z') // April 6, 6:00 PM MST (UTC-7)
+const DRAFT_DATE = new Date('2026-04-07T00:00:00Z') // April 6, 6:00 PM MDT (UTC-6)
 
 const tournamentStatus = computed(() => tournament.value?.status ?? 'pre-draft')
 
