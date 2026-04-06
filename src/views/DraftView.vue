@@ -777,7 +777,7 @@ onUnmounted(() => {
           <button
             v-for="profile in profiles"
             :key="profile.id"
-            @click="profile.id === auth.user?.id ? toggleReady() : (proxyPlayerIds.has(profile.id) ? toggleReadyFor(profile.id) : undefined)"
+            @click="profile.id === auth.user?.id ? toggleReady() : toggleReadyFor(profile.id)"
             class="w-full flex items-center justify-between py-2.5 px-3 rounded-lg cursor-pointer transition-colors min-h-[44px]"
             :class="isPlayerReady(profile.id) ? 'bg-green-50 hover:bg-green-100' : 'bg-gray-50 hover:bg-gray-100'"
           >
