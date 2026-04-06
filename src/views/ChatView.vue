@@ -274,14 +274,14 @@ async function toggleReaction(messageId: string, emoji: string) {
   const alreadyReacted = group?.userIds.includes(auth.user.id)
 
   if (alreadyReacted) {
-    await supabase
+    const { error } = await supabase
       .from('message_reactions')
       .delete()
       .eq('message_id', messageId)
       .eq('user_id', auth.user.id)
       .eq('emoji', emoji)
 
-    // Optimistic update
+    if (error) return
     if (group) {
       group.userIds = group.userIds.filter((id) => id !== auth.user!.id)
       group.count--
@@ -290,13 +290,13 @@ async function toggleReaction(messageId: string, emoji: string) {
       }
     }
   } else {
-    await supabase.from('message_reactions').insert({
+    const { error } = await supabase.from('message_reactions').insert({
       message_id: messageId,
       user_id: auth.user.id,
       emoji,
     })
 
-    // Optimistic update
+    if (error) return
     if (group) {
       group.userIds.push(auth.user.id)
       group.count++

@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, onMounted } from 'vue'
+import { computed, onMounted, onUnmounted } from 'vue'
+import type { RealtimeChannel } from '@supabase/supabase-js'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from './stores/auth'
 import { useChatStore } from './stores/chat'
@@ -10,8 +11,10 @@ const router = useRouter()
 const auth = useAuthStore()
 const chatStore = useChatStore()
 
+let chatChannel: RealtimeChannel | null = null
+
 onMounted(() => {
-  supabase
+  chatChannel = supabase
     .channel('global-chat-notifications')
     .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, (payload) => {
       if (payload.new && (payload.new as any).user_id !== auth.user?.id && route.name !== 'Chat') {
@@ -19,6 +22,13 @@ onMounted(() => {
       }
     })
     .subscribe()
+})
+
+onUnmounted(() => {
+  if (chatChannel) {
+    supabase.removeChannel(chatChannel)
+    chatChannel = null
+  }
 })
 
 const showNav = computed(() => {

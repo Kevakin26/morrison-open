@@ -92,11 +92,11 @@ async function addProxyPlayer() {
 async function toggleReadyFor(userId: string) {
   if (!tournament.value) return
   const current = readyChecks.value.find(rc => rc.user_id === userId)
-  await supabase.from('ready_checks').upsert(
+  const { error } = await supabase.from('ready_checks').upsert(
     { tournament_id: tournament.value.id, user_id: userId, is_ready: !(current?.is_ready) },
     { onConflict: 'tournament_id,user_id' }
   )
-  // Refresh
+  if (error) { console.error('toggleReadyFor failed:', error); return }
   const { data } = await supabase.from('ready_checks').select('*').eq('tournament_id', tournament.value.id)
   if (data) readyChecks.value = data
 }
@@ -110,7 +110,7 @@ const startingDraft = ref(false)
 // Countdown
 const countdown = ref({ days: 0, hours: 0, minutes: 0, seconds: 0 })
 let countdownInterval: ReturnType<typeof setInterval> | null = null
-const DRAFT_DATE = new Date('2026-04-07T00:00:00Z') // April 6, 6:00 PM MST (America/Boise)
+const DRAFT_DATE = new Date('2026-04-07T01:00:00Z') // April 6, 6:00 PM MST (UTC-7)
 
 const currentUserReady = computed(() => {
   if (!auth.user) return false
@@ -148,10 +148,11 @@ async function toggleReady() {
   togglingReady.value = true
   const newReady = !currentUserReady.value
   try {
-    await supabase.from('ready_checks').upsert(
+    const { error } = await supabase.from('ready_checks').upsert(
       { tournament_id: tournament.value.id, user_id: auth.user.id, is_ready: newReady },
       { onConflict: 'tournament_id,user_id' }
     )
+    if (error) { console.error('toggleReady failed:', error); return }
     // After the upsert, check if we should auto-start
     if (newReady) {
       const { data: checks } = await supabase
@@ -583,7 +584,8 @@ async function fetchData() {
   profiles.value = profilesRes.data ?? []
   readyChecks.value = readyRes.data ?? []
 
-  // Start countdown
+  // Start countdown (clear any existing interval first)
+  if (countdownInterval) { clearInterval(countdownInterval); countdownInterval = null }
   updateCountdown()
   countdownInterval = setInterval(updateCountdown, 1000)
 
@@ -847,7 +849,7 @@ onUnmounted(() => {
     </template>
 
     <!-- ==================== LOTTERY ==================== -->
-    <template v-else-if="draftState.status === 'drafting' && showLottery">
+    <template v-else-if="draftState?.status === 'drafting' && showLottery">
       <div class="text-center space-y-6">
         <div class="bg-augusta-gradient rounded-2xl p-6 sm:p-8 shadow-lg">
           <img src="/masters-logo.png" alt="The Masters" class="h-14 sm:h-16 mx-auto mb-3" />
@@ -888,7 +890,7 @@ onUnmounted(() => {
     </template>
 
     <!-- ==================== DRAFTING ==================== -->
-    <template v-else-if="draftState.status === 'drafting' && !showLottery">
+    <template v-else-if="draftState?.status === 'drafting' && !showLottery">
       <!-- Pick Announcement Overlay -->
       <Transition
         enter-active-class="transition-all duration-500 ease-out"
@@ -921,7 +923,7 @@ onUnmounted(() => {
         <h1 class="text-xl sm:text-2xl font-bold text-gold-glow tracking-wider">THE MORRISON OPEN DRAFT</h1>
         <p class="text-cream/70 text-sm mt-1">
           Round {{ currentRound }} of {{ totalRounds }}
-          &middot; Pick {{ draftState.current_pick_index + 1 }} of {{ totalPicks }}
+          &middot; Pick {{ (draftState?.current_pick_index ?? 0) + 1 }} of {{ totalPicks }}
         </p>
         <a
           :href="MEET_LINK"
@@ -1157,7 +1159,7 @@ onUnmounted(() => {
     </template>
 
     <!-- ==================== COMPLETED ==================== -->
-    <template v-else-if="draftState.status === 'completed'">
+    <template v-else-if="draftState?.status === 'completed'">
       <div class="bg-augusta-gradient rounded-2xl p-6 shadow-lg text-center">
         <h1 class="text-2xl font-bold text-gold-glow tracking-wider">DRAFT COMPLETE!</h1>
         <p class="text-cream/80 mt-2 text-sm">All picks are in. Good luck!</p>
