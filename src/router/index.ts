@@ -64,16 +64,22 @@ const router = createRouter({
 })
 
 import { useAuthStore } from '@/stores/auth'
+import { watch } from 'vue'
 
-router.beforeEach((to, _from, next) => {
+function waitForAuth(auth: ReturnType<typeof useAuthStore>): Promise<void> {
+  if (!auth.loading) return Promise.resolve()
+  return new Promise(resolve => {
+    const stop = watch(() => auth.loading, (loading) => {
+      if (!loading) { stop(); resolve() }
+    })
+  })
+}
+
+router.beforeEach(async (to, _from, next) => {
   const requiresAuth = to.meta.requiresAuth !== false
   const auth = useAuthStore()
 
-  // Don't redirect while auth is still loading
-  if (auth.loading) {
-    next()
-    return
-  }
+  await waitForAuth(auth)
 
   if (requiresAuth && !auth.isAuthenticated) {
     next('/login')
