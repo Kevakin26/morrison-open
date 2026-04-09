@@ -92,12 +92,19 @@ async function fetchFromMasters(): Promise<FetchResult> {
       total_score: parseScore(p.total ?? p.totalScore),
       to_par: parseToPar(p.topar ?? p.toPar ?? p.today_total ?? p.overallPar),
       today: parseToPar(p.today),
-      thru: p.thru != null ? String(p.thru) : null,
+      thru: p.thru != null && String(p.thru).trim() !== '' ? String(p.thru) : (p.teetime ? String(p.teetime) : null),
       r1: parseScore(rounds?.[0]?.score ?? rounds?.[0]?.strokes ?? p.r1 ?? p.round1),
       r2: parseScore(rounds?.[1]?.score ?? rounds?.[1]?.strokes ?? p.r2 ?? p.round2),
       r3: parseScore(rounds?.[2]?.score ?? rounds?.[2]?.strokes ?? p.r3 ?? p.round3),
       r4: parseScore(rounds?.[3]?.score ?? rounds?.[3]?.strokes ?? p.r4 ?? p.round4),
-      status: String(p.status ?? 'active').toLowerCase(),
+      status: (() => {
+        const s = String(p.status ?? 'active').toLowerCase()
+        // masters.com uses 'x' for pre-tournament, map to 'active'
+        if (s === 'x' || s === '') return 'active'
+        if (s === 'mc') return 'cut'
+        if (s === 'wd') return 'withdrawn'
+        return s
+      })(),
     }
   })
 
@@ -393,10 +400,11 @@ Deno.serve(async (req) => {
             is_manual: false,
             updated_at: new Date().toISOString(),
           },
-          { onConflict: 'golfer_id,tournament_id' }
+          { onConflict: 'tournament_id,golfer_id' }
         )
 
-      if (!upsertErr) updatedCount++
+      if (upsertErr) { console.error(`Upsert failed for ${golfer.name} (flipped):`, upsertErr.message) }
+      else { updatedCount++ }
       continue
     }
 
@@ -419,10 +427,11 @@ Deno.serve(async (req) => {
           is_manual: false,
           updated_at: new Date().toISOString(),
         },
-        { onConflict: 'golfer_id,tournament_id' }
+        { onConflict: 'tournament_id,golfer_id' }
       )
 
-    if (!upsertErr) updatedCount++
+    if (upsertErr) { console.error(`Upsert failed for ${golfer.name}:`, upsertErr.message) }
+    else { updatedCount++ }
   }
 
   // 6) Update tournament info (current round, cut line)
