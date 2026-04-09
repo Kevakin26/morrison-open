@@ -84,7 +84,24 @@ async function fetchFromMasters(): Promise<FetchResult> {
     const last = String(p.last_name ?? p.lastName ?? '')
     const name = `${first} ${last}`.trim()
 
-    const rounds = (p.rounds ?? p.round ?? []) as Record<string, unknown>[]
+    // Round data can be nested objects {total, scores, ...} or simple values
+    const extractRoundTotal = (round: unknown): number | null => {
+      if (round == null) return null
+      if (typeof round === 'number') return round
+      if (typeof round === 'object') {
+        const r = round as Record<string, unknown>
+        // Sum hole scores if total isn't available
+        if (r.total != null) return parseScore(r.total)
+        if (Array.isArray(r.scores)) {
+          const scores = (r.scores as (number | null)[]).filter((s): s is number => s != null)
+          return scores.length === 18 ? scores.reduce((a, b) => a + b, 0) : null
+        }
+        return parseScore(r.score ?? r.strokes)
+      }
+      return parseScore(round)
+    }
+
+    const rounds = (p.rounds ?? p.round ?? []) as unknown[]
 
     return {
       name,
@@ -93,14 +110,13 @@ async function fetchFromMasters(): Promise<FetchResult> {
       to_par: parseToPar(p.topar ?? p.toPar ?? p.today_total ?? p.overallPar),
       today: parseToPar(p.today),
       thru: p.thru != null && String(p.thru).trim() !== '' ? String(p.thru) : (p.teetime ? String(p.teetime) : null),
-      r1: parseScore(rounds?.[0]?.score ?? rounds?.[0]?.strokes ?? p.r1 ?? p.round1),
-      r2: parseScore(rounds?.[1]?.score ?? rounds?.[1]?.strokes ?? p.r2 ?? p.round2),
-      r3: parseScore(rounds?.[2]?.score ?? rounds?.[2]?.strokes ?? p.r3 ?? p.round3),
-      r4: parseScore(rounds?.[3]?.score ?? rounds?.[3]?.strokes ?? p.r4 ?? p.round4),
+      r1: extractRoundTotal(rounds?.[0] ?? p.round1),
+      r2: extractRoundTotal(rounds?.[1] ?? p.round2),
+      r3: extractRoundTotal(rounds?.[2] ?? p.round3),
+      r4: extractRoundTotal(rounds?.[3] ?? p.round4),
       status: (() => {
         const s = String(p.status ?? 'active').toLowerCase()
-        // masters.com uses 'x' for pre-tournament, map to 'active'
-        if (s === 'x' || s === '') return 'active'
+        if (s === 'x' || s === 'a' || s === '') return 'active'
         if (s === 'mc') return 'cut'
         if (s === 'wd') return 'withdrawn'
         return s
