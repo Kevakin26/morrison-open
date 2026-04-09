@@ -48,6 +48,20 @@ const chatFeedRef = ref<HTMLElement | null>(null)
 const chatInputRef = ref<HTMLTextAreaElement | null>(null)
 const chatUserScrolledUp = ref(false)
 
+// Craig roast modal — show once per session until April 11
+const showCraigRoast = ref(false)
+function checkCraigRoast() {
+  const now = new Date()
+  const expiry = new Date('2026-04-11T00:00:00Z')
+  if (now < expiry && !sessionStorage.getItem('craig-roast-dismissed')) {
+    showCraigRoast.value = true
+  }
+}
+function dismissCraigRoast() {
+  showCraigRoast.value = false
+  sessionStorage.setItem('craig-roast-dismissed', '1')
+}
+
 function formatToPar(n: number | null): string {
   if (n == null) return '--'
   if (n === 0) return 'E'
@@ -896,6 +910,7 @@ watch(() => draftState.value?.pick_deadline, () => {
 onMounted(async () => {
   await fetchData()
   setupRealtimeSubscriptions()
+  checkCraigRoast()
   if (draftState.value?.status === 'drafting' && draftState.value.pick_deadline) {
     startTimer()
   }
@@ -1337,6 +1352,64 @@ onUnmounted(() => {
 
     <!-- ==================== TOURNAMENT HOME (COMPLETED DRAFT) ==================== -->
     <template v-else-if="draftState?.status === 'completed'">
+
+      <!-- Craig Roast Modal -->
+      <Teleport to="body">
+        <Transition name="fade">
+          <div v-if="showCraigRoast" class="fixed inset-0 z-[100] flex items-center justify-center p-4" @click.self="dismissCraigRoast">
+            <div class="fixed inset-0 bg-black/60 backdrop-blur-sm"></div>
+            <div class="relative bg-white rounded-2xl shadow-2xl max-w-md w-full overflow-hidden animate-bounce-in">
+              <!-- Header -->
+              <div class="bg-augusta-gradient px-6 py-4 text-center">
+                <p class="text-gold-glow text-xs font-bold uppercase tracking-widest">Morrison Open Handicap Bureau</p>
+                <h2 class="text-white text-xl font-bold mt-1">Official Ruling</h2>
+              </div>
+              <!-- Scorecard -->
+              <div class="px-6 py-4">
+                <div class="bg-gray-100 rounded-xl p-4 mb-4">
+                  <div class="flex items-center justify-between mb-2">
+                    <div>
+                      <p class="text-dark font-bold text-sm">Moses Pointe GR (18)</p>
+                      <p class="text-gray-400 text-xs">Apr 8, 2026 &middot; Red Tees &middot; 5,786 yds</p>
+                    </div>
+                    <div class="text-right">
+                      <p class="text-3xl font-bold font-score text-red-600">112</p>
+                      <p class="text-xs text-red-500 font-bold">+40</p>
+                    </div>
+                  </div>
+                  <div class="grid grid-cols-2 gap-2 text-center text-xs mt-2">
+                    <div class="bg-white rounded-lg py-1.5">
+                      <p class="text-gray-400">Front 9</p>
+                      <p class="font-bold font-score text-dark">56 <span class="text-red-500 text-[10px]">+20</span></p>
+                    </div>
+                    <div class="bg-white rounded-lg py-1.5">
+                      <p class="text-gray-400">Back 9</p>
+                      <p class="font-bold font-score text-dark">56 <span class="text-red-500 text-[10px]">+20</span></p>
+                    </div>
+                  </div>
+                </div>
+                <!-- The roast -->
+                <p class="text-dark text-sm leading-relaxed">
+                  After carefully calculating Craig's handicap from his last 18, the Morrison Open Handicap Bureau has determined that his official handicap from the golds is <span class="font-bold text-augusta">autism</span>.
+                </p>
+                <p class="text-dark text-sm leading-relaxed mt-3">
+                  Catch Craig on the new season of <span class="font-bold italic">Love on the Spectrum</span>. Premiering this fall.
+                </p>
+              </div>
+              <!-- Dismiss -->
+              <div class="px-6 pb-5">
+                <button
+                  @click="dismissCraigRoast"
+                  class="w-full py-3 rounded-xl font-bold text-white bg-augusta-gradient shadow-lg active:scale-95 transition-all"
+                >
+                  I've Seen Enough
+                </button>
+              </div>
+            </div>
+          </div>
+        </Transition>
+      </Teleport>
+
       <!-- Header -->
       <div class="bg-augusta-gradient rounded-2xl p-5 shadow-lg text-center">
         <img src="/masters-logo.png" alt="The Masters" class="h-10 mx-auto mb-1" />
@@ -1499,3 +1572,13 @@ onUnmounted(() => {
   </div>
 </template>
 
+<style scoped>
+.fade-enter-active, .fade-leave-active { transition: opacity 0.3s ease; }
+.fade-enter-from, .fade-leave-to { opacity: 0; }
+@keyframes bounce-in {
+  0% { transform: scale(0.8) translateY(20px); opacity: 0; }
+  50% { transform: scale(1.03); }
+  100% { transform: scale(1) translateY(0); opacity: 1; }
+}
+.animate-bounce-in { animation: bounce-in 0.4s ease-out; }
+</style>
