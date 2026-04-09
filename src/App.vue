@@ -36,14 +36,14 @@ const showNav = computed(() => {
 })
 
 const showHeader = computed(() => {
-  return auth.isAuthenticated && !['Login', 'Register', 'Chat'].includes(route.name as string)
+  return auth.isAuthenticated && !['Login', 'Register', 'Chat', 'Draft'].includes(route.name as string)
 })
 
 const tabs = [
-  { name: 'Draft', path: '/draft', icon: '\u{1F4CB}', label: 'Draft' },
-  { name: 'Golfers', path: '/golfers', icon: '\u26F3', label: 'Field' },
+  { name: 'Draft', path: '/draft', icon: '\u{1F3E0}', label: 'Home' },
   { name: 'Leaderboard', path: '/leaderboard', icon: '\u{1F3C6}', label: 'Board' },
   { name: 'MyTeam', path: '/my-team', icon: '\u{1F3CC}\uFE0F', label: 'My Team' },
+  { name: 'Golfers', path: '/golfers', icon: '\u26F3', label: 'Field' },
   { name: 'Chat', path: '/chat', icon: '\u{1F4AC}', label: 'Chat' },
 ]
 

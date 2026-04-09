@@ -10,13 +10,20 @@ export const useAuthStore = defineStore('auth', () => {
 
   const isAuthenticated = computed(() => !!user.value)
 
+  function setUser(u: User | null) {
+    user.value = u
+    if (u) {
+      displayName.value = u.user_metadata?.display_name || u.user_metadata?.full_name || u.user_metadata?.name || u.email || ''
+    } else {
+      displayName.value = ''
+    }
+  }
+
   async function init() {
     try {
       const { data: { session } } = await supabase.auth.getSession()
       if (session) {
-        user.value = session.user
-        displayName.value = session.user.user_metadata?.display_name || session.user.user_metadata?.full_name || session.user.user_metadata?.name || session.user.email || ''
-        localStorage.setItem('sb-auth-token', session.access_token)
+        setUser(session.user)
       }
     } catch (e) {
       console.error('Auth init failed:', e)
@@ -25,14 +32,7 @@ export const useAuthStore = defineStore('auth', () => {
     }
 
     supabase.auth.onAuthStateChange((_event, session) => {
-      user.value = session?.user ?? null
-      if (session) {
-        displayName.value = session.user.user_metadata?.display_name || session.user.user_metadata?.full_name || session.user.user_metadata?.name || session.user.email || ''
-        localStorage.setItem('sb-auth-token', session.access_token)
-      } else {
-        displayName.value = ''
-        localStorage.removeItem('sb-auth-token')
-      }
+      setUser(session?.user ?? null)
     })
   }
 
@@ -62,7 +62,6 @@ export const useAuthStore = defineStore('auth', () => {
 
   async function logout() {
     await supabase.auth.signOut()
-    localStorage.removeItem('sb-auth-token')
   }
 
   async function resetPassword(email: string) {

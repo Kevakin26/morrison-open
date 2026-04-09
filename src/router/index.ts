@@ -69,6 +69,12 @@ router.beforeEach((to, _from, next) => {
   const requiresAuth = to.meta.requiresAuth !== false
   const auth = useAuthStore()
 
+  // Don't redirect while auth is still loading
+  if (auth.loading) {
+    next()
+    return
+  }
+
   if (requiresAuth && !auth.isAuthenticated) {
     next('/login')
   } else if (!requiresAuth && auth.isAuthenticated && (to.name === 'Login' || to.name === 'Register')) {

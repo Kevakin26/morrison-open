@@ -49,7 +49,7 @@ function formatToday(today: number | null, thru: string | null): string {
 
 function isActive(score: GolferScore | null): boolean {
   if (!score) return true // no score yet means hasn't been cut
-  return score.status === 'active'
+  return score.status?.toLowerCase() === 'active'
 }
 
 function isCut(score: GolferScore | null): boolean {

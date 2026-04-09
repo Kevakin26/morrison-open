@@ -2,6 +2,7 @@
 import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { supabase } from '@/lib/supabase'
 import { useAuthStore } from '@/stores/auth'
+import { useChatStore } from '@/stores/chat'
 
 import type { Database } from '@/types/database'
 import type { RealtimeChannel } from '@supabase/supabase-js'
@@ -9,7 +10,13 @@ import type { RealtimeChannel } from '@supabase/supabase-js'
 type Tournament = Database['public']['Tables']['tournaments']['Row']
 type DraftPick = Database['public']['Tables']['draft_picks']['Row']
 type Golfer = Database['public']['Tables']['golfers']['Row']
+type GolferScore = Database['public']['Tables']['golfer_scores']['Row']
 type Profile = Database['public']['Tables']['profiles']['Row']
+type Message = Database['public']['Tables']['messages']['Row']
+type MessageReaction = Database['public']['Tables']['message_reactions']['Row']
+
+interface ReactionGroup { emoji: string; count: number; userIds: string[] }
+interface MessageWithMeta extends Message { reactions: ReactionGroup[]; senderName: string }
 
 interface DraftState {
   id: string
@@ -30,6 +37,97 @@ const draftPicks = ref<DraftPick[]>([])
 const golfers = ref<Golfer[]>([])
 const profiles = ref<Profile[]>([])
 const loading = ref(true)
+
+// Tournament home state (for completed/in-progress)
+const chatStore = useChatStore()
+const golferScores = ref<GolferScore[]>([])
+const chatMessages = ref<MessageWithMeta[]>([])
+const chatProfileMap = ref<Map<string, string>>(new Map())
+const newChatMessage = ref('')
+const chatFeedRef = ref<HTMLElement | null>(null)
+const chatInputRef = ref<HTMLTextAreaElement | null>(null)
+const chatUserScrolledUp = ref(false)
+
+function formatToPar(n: number | null): string {
+  if (n == null) return '--'
+  if (n === 0) return 'E'
+  return n > 0 ? `+${n}` : `${n}`
+}
+
+function chatFormatTimestamp(dateStr: string): string {
+  const diffMin = Math.floor((Date.now() - new Date(dateStr).getTime()) / 60000)
+  if (diffMin < 1) return 'just now'
+  if (diffMin < 60) return `${diffMin}m ago`
+  const diffHour = Math.floor(diffMin / 60)
+  if (diffHour < 24) return `${diffHour}h ago`
+  return new Date(dateStr).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+}
+
+function chatEscapeHtml(str: string): string {
+  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+}
+
+function chatRenderContent(content: string): string {
+  return chatEscapeHtml(content).replace(/@(\w[\w\s]*?\w|\w)/g, '<span class="bg-gold/20 text-augusta font-semibold px-0.5 rounded">@$1</span>')
+}
+
+const playerStandings = computed(() => {
+  const results: { userId: string; name: string; totalToPar: number | null }[] = []
+  for (const profile of profiles.value) {
+    const playerPicks = draftPicks.value.filter(dp => dp.user_id === profile.id)
+    const activeScores = playerPicks
+      .map(pick => golferScores.value.find(gs => gs.golfer_id === pick.golfer_id))
+      .filter((score): score is GolferScore => score != null && score.status?.toLowerCase() === 'active')
+      .filter(score => score.to_par != null)
+      .sort((a, b) => (a.to_par ?? 999) - (b.to_par ?? 999))
+    const best2 = activeScores.slice(0, 2)
+    const total = best2.length > 0 ? best2.reduce((sum, s) => sum + (s.to_par ?? 0), 0) : null
+    results.push({ userId: profile.id, name: profile.display_name, totalToPar: total })
+  }
+  return results.sort((a, b) => (a.totalToPar ?? 999) - (b.totalToPar ?? 999))
+})
+
+const myTeamWithScores = computed(() => {
+  if (!auth.user) return []
+  const picks = draftPicks.value
+    .filter(dp => dp.user_id === auth.user!.id)
+    .map(dp => {
+      const golfer = golfers.value.find(g => g.id === dp.golfer_id)
+      const score = golferScores.value.find(gs => gs.golfer_id === dp.golfer_id) ?? null
+      return { ...dp, golfer, score }
+    })
+  picks.sort((a, b) => (a.score?.to_par ?? 999) - (b.score?.to_par ?? 999))
+  return picks
+})
+
+async function sendChatMessage() {
+  if (!newChatMessage.value.trim() || !auth.user) return
+  const content = newChatMessage.value.trim()
+  newChatMessage.value = ''
+  if (chatInputRef.value) chatInputRef.value.style.height = 'auto'
+  const { error } = await supabase.from('messages').insert({ user_id: auth.user.id, content })
+  if (error) { newChatMessage.value = content; console.error('Failed to send:', error) }
+}
+
+function handleChatKeydown(e: KeyboardEvent) {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChatMessage() }
+}
+
+function handleChatInput(e: Event) {
+  const target = e.target as HTMLTextAreaElement
+  target.style.height = 'auto'
+  target.style.height = Math.min(target.scrollHeight, 80) + 'px'
+}
+
+function handleChatScroll() {
+  if (!chatFeedRef.value) return
+  const el = chatFeedRef.value
+  chatUserScrolledUp.value = (el.scrollHeight - el.scrollTop - el.clientHeight) > 100
+}
+
+function scrollChatToBottom() {
+  nextTick(() => { if (chatFeedRef.value) chatFeedRef.value.scrollTop = chatFeedRef.value.scrollHeight })
+}
 
 // UI state
 const searchQuery = ref('')
@@ -584,6 +682,48 @@ async function fetchData() {
   profiles.value = profilesRes.data ?? []
   readyChecks.value = readyRes.data ?? []
 
+  // Build chat profile map
+  for (const p of profiles.value) { chatProfileMap.value.set(p.id, p.display_name) }
+
+  // Load scores + chat for tournament home
+  if (draftState.value?.status === 'completed' || t.status === 'in-progress' || t.status === 'completed') {
+    const [scoresRes, msgsRes] = await Promise.all([
+      supabase.from('golfer_scores').select('*').eq('tournament_id', t.id),
+      supabase.from('messages').select('*').order('created_at', { ascending: false }).limit(50),
+    ])
+    golferScores.value = scoresRes.data ?? []
+
+    const msgs = msgsRes.data ?? []
+    // Fetch reactions
+    const messageIds = msgs.map(m => m.id)
+    let reactions: MessageReaction[] = []
+    if (messageIds.length > 0) {
+      const { data: reactionsData } = await supabase.from('message_reactions').select('*').in('message_id', messageIds)
+      reactions = reactionsData || []
+    }
+    const reactionsByMsg = new Map<string, MessageReaction[]>()
+    for (const r of reactions) {
+      const existing = reactionsByMsg.get(r.message_id) || []
+      existing.push(r)
+      reactionsByMsg.set(r.message_id, existing)
+    }
+    chatMessages.value = msgs.map(m => {
+      const msgReactions = reactionsByMsg.get(m.id) || []
+      const grouped: ReactionGroup[] = []
+      const rMap = new Map<string, { count: number; userIds: string[] }>()
+      for (const r of msgReactions) {
+        const e = rMap.get(r.emoji)
+        if (e) { e.count++; e.userIds.push(r.user_id) }
+        else { rMap.set(r.emoji, { count: 1, userIds: [r.user_id] }) }
+      }
+      rMap.forEach((v, k) => grouped.push({ emoji: k, ...v }))
+      return { ...m, reactions: grouped, senderName: chatProfileMap.value.get(m.user_id) || 'Unknown' }
+    }).reverse()
+
+    chatStore.reset()
+    nextTick(() => scrollChatToBottom())
+  }
+
   // Start countdown (clear any existing interval first)
   if (countdownInterval) { clearInterval(countdownInterval); countdownInterval = null }
   updateCountdown()
@@ -665,6 +805,43 @@ function setupRealtimeSubscriptions() {
     )
     .subscribe()
   channels.push(readyChannel)
+
+  // Scores realtime
+  const scoresChannel = supabase
+    .channel('draft-view-scores')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'golfer_scores', filter: `tournament_id=eq.${tournament.value.id}` },
+      async () => {
+        if (!tournament.value) return
+        const { data } = await supabase.from('golfer_scores').select('*').eq('tournament_id', tournament.value.id)
+        golferScores.value = data ?? []
+      })
+    .subscribe()
+  channels.push(scoresChannel)
+
+  // Chat realtime
+  const chatMsgChannel = supabase
+    .channel('draft-view-chat')
+    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' },
+      (payload) => {
+        const newMsg = payload.new as Message
+        if (chatMessages.value.some(m => m.id === newMsg.id)) return
+        chatMessages.value.push({
+          ...newMsg,
+          reactions: [],
+          senderName: chatProfileMap.value.get(newMsg.user_id) || 'Unknown',
+        })
+        if (!chatUserScrolledUp.value) scrollChatToBottom()
+      })
+    .subscribe()
+  channels.push(chatMsgChannel)
+
+  // Tournament status realtime
+  const tournamentChannel = supabase
+    .channel('draft-view-tournament')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'tournaments', filter: `id=eq.${tournament.value.id}` },
+      (payload) => { tournament.value = payload.new as Tournament })
+    .subscribe()
+  channels.push(tournamentChannel)
 }
 
 function cleanup() {
@@ -735,7 +912,7 @@ onUnmounted(() => {
 
 <template>
   <div class="min-h-screen bg-golf-draft">
-  <div class="p-4 sm:p-6 lg:p-8 mx-auto space-y-4 pb-24" :class="draftState?.status === 'drafting' && !showLottery ? 'max-w-lg md:max-w-3xl lg:max-w-6xl' : 'max-w-lg md:max-w-2xl lg:max-w-3xl'">
+  <div class="p-4 sm:p-6 lg:p-8 mx-auto space-y-4 pb-24" :class="draftState?.status === 'drafting' && !showLottery ? 'max-w-lg md:max-w-3xl lg:max-w-6xl' : draftState?.status === 'completed' ? 'max-w-lg md:max-w-3xl lg:max-w-4xl' : 'max-w-lg md:max-w-2xl lg:max-w-3xl'">
     <!-- Loading -->
     <div v-if="loading" class="flex items-center justify-center py-20">
       <div class="animate-spin rounded-full h-10 w-10 border-4 border-augusta border-t-transparent"></div>
@@ -1158,73 +1335,165 @@ onUnmounted(() => {
       </div>
     </template>
 
-    <!-- ==================== COMPLETED ==================== -->
+    <!-- ==================== TOURNAMENT HOME (COMPLETED DRAFT) ==================== -->
     <template v-else-if="draftState?.status === 'completed'">
-      <div class="bg-augusta-gradient rounded-2xl p-6 shadow-lg text-center">
-        <h1 class="text-2xl font-bold text-gold-glow tracking-wider">DRAFT COMPLETE!</h1>
-        <p class="text-cream/80 mt-2 text-sm">All picks are in. Good luck!</p>
+      <!-- Header -->
+      <div class="bg-augusta-gradient rounded-2xl p-5 shadow-lg text-center">
+        <img src="/masters-logo.png" alt="The Masters" class="h-10 mx-auto mb-1" />
+        <h1 class="text-xl font-bold text-gold-glow tracking-wider">THE MORRISON OPEN</h1>
+        <p v-if="tournament?.current_round" class="text-cream/70 text-xs mt-1">
+          The Masters &ndash; Round {{ tournament.current_round }}
+        </p>
+        <p v-else class="text-cream/70 text-xs mt-1">Tournament starts April 9</p>
       </div>
 
-      <!-- Full Draft Recap by Round -->
+      <!-- Podium -->
       <div class="bg-white rounded-2xl shadow-md p-4">
-        <h2 class="font-bold text-dark text-lg mb-3">Draft Recap</h2>
-        <div class="space-y-4">
-          <div v-for="round in draftBoard" :key="round.round">
-            <div class="flex items-center gap-2 mb-2">
-              <span class="text-xs font-bold text-augusta uppercase tracking-wide">Round {{ round.round }}</span>
-              <span v-if="round.reversed" class="text-[10px] text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded">
-                &#8635; Snake
-              </span>
-              <div class="flex-1 border-t border-gray-100"></div>
+        <div class="flex items-end justify-center gap-3 pt-4 pb-2">
+          <!-- 2nd Place -->
+          <div v-if="playerStandings[1]" class="flex flex-col items-center w-24">
+            <p class="text-sm font-semibold text-dark truncate w-full text-center">{{ playerStandings[1].name }}</p>
+            <p class="font-bold font-score text-sm" :class="(playerStandings[1].totalToPar ?? 0) < 0 ? 'text-red-600' : 'text-gray-600'">
+              {{ formatToPar(playerStandings[1].totalToPar) }}
+            </p>
+            <div class="w-full bg-gray-300 rounded-t-lg mt-2 flex items-end justify-center" style="height: 72px">
+              <span class="text-2xl font-bold font-score text-white pb-2">2</span>
             </div>
-            <div class="space-y-1.5">
-              <div
-                v-for="slot in round.slots"
-                :key="slot.pickNumber"
-                class="flex items-center gap-2 px-3 py-2 rounded-lg bg-gray-50 text-sm"
-                :class="slot.userId === auth.user?.id ? 'ring-1 ring-augusta/30 bg-augusta/5' : ''"
-              >
-                <span class="w-6 text-center text-xs font-bold font-score text-gray-400">
-                  {{ slot.pickNumber }}
-                </span>
-                <span class="w-24 truncate font-medium text-dark">
-                  {{ slot.userName }}
-                  <span v-if="slot.userId === auth.user?.id" class="text-[10px] text-augusta ml-0.5">(You)</span>
-                </span>
-                <span class="flex-1 text-right truncate font-medium text-dark">
-                  {{ slot.golfer?.name ?? '--' }}
-                </span>
+          </div>
+          <!-- 1st Place -->
+          <div v-if="playerStandings[0]" class="flex flex-col items-center w-28">
+            <p class="text-sm font-bold text-dark truncate w-full text-center">{{ playerStandings[0].name }}</p>
+            <p class="font-bold font-score text-base" :class="(playerStandings[0].totalToPar ?? 0) < 0 ? 'text-red-600' : 'text-gray-600'">
+              {{ formatToPar(playerStandings[0].totalToPar) }}
+            </p>
+            <div class="w-full bg-gold rounded-t-lg mt-2 flex items-end justify-center" style="height: 96px">
+              <span class="text-3xl font-bold font-score text-white pb-2">1</span>
+            </div>
+          </div>
+          <!-- 3rd Place -->
+          <div v-if="playerStandings[2]" class="flex flex-col items-center w-24">
+            <p class="text-sm font-semibold text-dark truncate w-full text-center">{{ playerStandings[2].name }}</p>
+            <p class="font-bold font-score text-sm" :class="(playerStandings[2].totalToPar ?? 0) < 0 ? 'text-red-600' : 'text-gray-600'">
+              {{ formatToPar(playerStandings[2].totalToPar) }}
+            </p>
+            <div class="w-full bg-amber-600 rounded-t-lg mt-2 flex items-end justify-center" style="height: 56px">
+              <span class="text-2xl font-bold font-score text-white pb-2">3</span>
+            </div>
+          </div>
+        </div>
+        <router-link to="/leaderboard" class="block text-center text-augusta font-semibold text-xs mt-3 hover:underline">
+          See All Standings &rarr;
+        </router-link>
+      </div>
+
+      <!-- Side by Side: My Team + Chat -->
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <!-- My Team -->
+        <div class="bg-white rounded-2xl shadow-md p-4 flex flex-col">
+          <div class="flex items-center justify-between mb-3">
+            <h2 class="font-bold text-dark text-base">Your Team</h2>
+            <router-link to="/my-team" class="text-xs text-augusta font-semibold hover:underline">Details &rarr;</router-link>
+          </div>
+          <div class="space-y-1.5 flex-1">
+            <div
+              v-for="(pick, idx) in myTeamWithScores"
+              :key="pick.id"
+              class="flex items-center justify-between py-2 px-3 rounded-xl"
+              :class="idx < 2 ? 'bg-gold/8' : 'bg-gray-50'"
+            >
+              <div class="flex items-center gap-2 min-w-0">
+                <span v-if="idx < 2" class="text-[9px] font-bold text-gold bg-gold/15 px-1.5 py-0.5 rounded uppercase flex-shrink-0">CT</span>
+                <span v-else class="w-6 flex-shrink-0"></span>
+                <div class="min-w-0">
+                  <p class="font-medium text-dark text-sm truncate">{{ pick.golfer?.name ?? 'Unknown' }}</p>
+                  <p class="text-[10px] text-gray-400">
+                    {{ pick.score?.position ?? '--' }}
+                    <span v-if="pick.score?.thru"> &middot; Thru {{ pick.score.thru }}</span>
+                  </p>
+                </div>
               </div>
+              <span class="font-bold font-score text-sm flex-shrink-0 ml-2" :class="(pick.score?.to_par ?? 0) < 0 ? 'text-red-600' : 'text-gray-600'">
+                {{ pick.score?.to_par != null ? formatToPar(pick.score.to_par) : '--' }}
+              </span>
             </div>
           </div>
+          <!-- Quick Links -->
+          <div class="flex gap-2 mt-3 pt-3 border-t border-gray-100">
+            <router-link to="/leaderboard" class="flex-1 text-center bg-gray-50 rounded-lg py-2 text-xs font-semibold text-dark hover:bg-gray-100 transition-colors">
+              Leaderboard
+            </router-link>
+            <router-link to="/matchup" class="flex-1 text-center bg-gray-50 rounded-lg py-2 text-xs font-semibold text-dark hover:bg-gray-100 transition-colors">
+              Head to Head
+            </router-link>
+            <router-link to="/golfers" class="flex-1 text-center bg-gray-50 rounded-lg py-2 text-xs font-semibold text-dark hover:bg-gray-100 transition-colors">
+              Full Field
+            </router-link>
+          </div>
         </div>
-      </div>
 
-      <!-- Your Final Team -->
-      <div class="bg-white rounded-2xl shadow-md p-4">
-        <h2 class="font-bold text-dark text-lg mb-3">Your Team</h2>
-        <div class="space-y-2">
+        <!-- Chat -->
+        <div class="bg-white rounded-2xl shadow-md overflow-hidden flex flex-col">
+          <div class="bg-augusta px-4 py-2.5 flex items-center justify-between flex-shrink-0">
+            <h2 class="text-white font-bold text-sm tracking-tight">Chat</h2>
+            <router-link to="/chat" class="text-white/60 text-xs hover:text-white">Full Chat &rarr;</router-link>
+          </div>
           <div
-            v-for="(pick, idx) in myPicks"
-            :key="pick.id"
-            class="flex items-center gap-3 px-3 py-2.5 bg-augusta/5 rounded-xl"
+            ref="chatFeedRef"
+            class="flex-1 overflow-y-auto px-3 py-2 space-y-2 bg-cream/30"
+            style="min-height: 280px; max-height: 400px"
+            @scroll="handleChatScroll"
           >
-            <span class="text-sm font-bold font-score text-augusta w-6 text-center">{{ idx + 1 }}</span>
-            <span class="text-lg">{{ pick.golfer ? countryFlag(pick.golfer.country) : '' }}</span>
-            <div class="flex-1">
-              <p class="font-medium text-dark text-sm">{{ pick.golfer?.name ?? 'Unknown' }}</p>
-              <p class="text-gray-400 text-xs">#{{ pick.golfer?.world_ranking ?? '--' }} &middot; {{ pick.golfer?.odds ?? '--' }}</p>
+            <div
+              v-for="msg in chatMessages"
+              :key="msg.id"
+              class="flex flex-col"
+              :class="msg.user_id === auth.user?.id ? 'items-end' : 'items-start'"
+            >
+              <span class="text-[10px] font-bold mb-0.5 px-1" :class="msg.user_id === auth.user?.id ? 'text-augusta-dark' : 'text-dark/50'">
+                {{ msg.senderName }}
+              </span>
+              <div class="max-w-[85%]">
+                <div
+                  class="px-3 py-1.5 rounded-2xl text-sm leading-relaxed break-words"
+                  :class="msg.user_id === auth.user?.id
+                    ? 'bg-augusta text-white rounded-br-md'
+                    : 'bg-white text-dark rounded-bl-md shadow-sm'"
+                  v-html="chatRenderContent(msg.content)"
+                />
+                <div v-if="msg.reactions.length > 0" class="flex flex-wrap gap-0.5 mt-0.5" :class="msg.user_id === auth.user?.id ? 'justify-end' : 'justify-start'">
+                  <span v-for="reaction in msg.reactions" :key="reaction.emoji" class="inline-flex items-center gap-0.5 px-1 py-0.5 rounded-full text-[10px] bg-white border border-gray-100">
+                    <span>{{ reaction.emoji }}</span><span class="font-medium text-dark/60">{{ reaction.count }}</span>
+                  </span>
+                </div>
+              </div>
+              <span class="text-[9px] text-dark/30 mt-0.5 px-1">{{ chatFormatTimestamp(msg.created_at) }}</span>
             </div>
+            <div v-if="chatMessages.length === 0" class="text-center py-8 text-gray-400 text-sm">No messages yet</div>
+          </div>
+          <div class="border-t border-gray-100 px-3 py-2 flex items-end gap-2 flex-shrink-0">
+            <textarea
+              ref="chatInputRef"
+              v-model="newChatMessage"
+              placeholder="Send a message..."
+              rows="1"
+              class="flex-1 resize-none rounded-xl border border-gray-200 px-3 py-2 text-sm min-h-[38px] focus:outline-none focus:border-augusta focus:ring-1 focus:ring-augusta/30 bg-cream/30 placeholder-dark/30"
+              style="max-height: 72px"
+              @keydown="handleChatKeydown"
+              @input="handleChatInput"
+            />
+            <button
+              class="flex-shrink-0 w-9 h-9 rounded-full flex items-center justify-center transition-all"
+              :class="newChatMessage.trim() ? 'bg-gold text-white shadow-sm' : 'bg-gray-200 text-gray-400 cursor-not-allowed'"
+              :disabled="!newChatMessage.trim()"
+              @click="sendChatMessage"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" />
+              </svg>
+            </button>
           </div>
         </div>
       </div>
-
-      <router-link
-        to="/my-team"
-        class="block w-full py-4 rounded-xl font-bold text-white text-lg text-center bg-augusta-gradient shadow-lg active:scale-95 transition-transform"
-      >
-        View My Team &rarr;
-      </router-link>
     </template>
   </div>
   </div>

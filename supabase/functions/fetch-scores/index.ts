@@ -97,7 +97,7 @@ async function fetchFromMasters(): Promise<FetchResult> {
       r2: parseScore(rounds?.[1]?.score ?? rounds?.[1]?.strokes ?? p.r2 ?? p.round2),
       r3: parseScore(rounds?.[2]?.score ?? rounds?.[2]?.strokes ?? p.r3 ?? p.round3),
       r4: parseScore(rounds?.[3]?.score ?? rounds?.[3]?.strokes ?? p.r4 ?? p.round4),
-      status: String(p.status ?? 'active'),
+      status: String(p.status ?? 'active').toLowerCase(),
     }
   })
 
@@ -306,8 +306,19 @@ Deno.serve(async (req) => {
 
   // Build lookup map: normalized name -> golfer id
   const nameMap = new Map<string, string>()
+  // Known aliases: ESPN name -> masters.com (DB) name
+  const aliases: Record<string, string> = {
+    'johnny keefer': 'john keefer',
+    'nico echavarria': 'nicolas echavarria',
+    'sam stevens': 'samuel stevens',
+  }
   for (const g of dbGolfers) {
     nameMap.set(normalizeName(g.name), g.id)
+    // Also add without (A)/(B) suffix for amateur matching
+    const stripped = g.name.replace(/\s*\([A-Za-z]\)\s*$/, '').trim()
+    if (stripped !== g.name) {
+      nameMap.set(normalizeName(stripped), g.id)
+    }
   }
 
   // Fetch the active tournament ID
@@ -339,7 +350,10 @@ Deno.serve(async (req) => {
 
   for (const golfer of result.golfers) {
     const normalized = normalizeName(golfer.name)
+    // Check direct match, then alias, then strip (A)/(B) suffix
     const golferId = nameMap.get(normalized)
+      ?? nameMap.get(aliases[normalized] ?? '')
+      ?? nameMap.get(normalizeName(golfer.name.replace(/\s*\([A-Za-z]\)\s*$/, '')))
 
     if (!golferId) {
       // Try last-name-first matching: "Woods, Tiger" -> "Tiger Woods"

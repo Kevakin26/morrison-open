@@ -109,8 +109,7 @@ async function fetchTournamentStatus() {
   const { data } = await supabase
     .from('tournaments')
     .select('status')
-    .order('year', { ascending: false })
-    .limit(1)
+    .eq('year', 2026)
     .single()
 
   if (data) {

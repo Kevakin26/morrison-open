@@ -50,7 +50,7 @@ function formatToPar(n: number | null): string {
 
 function isGolferActive(score: GolferScore | null): boolean {
   if (!score) return true
-  return score.status === 'active'
+  return score.status?.toLowerCase() === 'active'
 }
 
 function parseOddsToProb(odds: string | null): number {
@@ -96,7 +96,7 @@ const playerStandings = computed<PlayerStanding[]>(() => {
     const counting = active.filter(pg => pg.counting)
     const withScores = counting.filter(pg => pg.score?.to_par != null)
     if (withScores.length > 0) {
-      combinedScore = withScores.reduce((sum, pg) => sum + pg.score!.to_par!, 0)
+      combinedScore = withScores.reduce((sum, pg) => sum + (pg.score?.to_par ?? 0), 0)
     }
 
     // Winning odds: implied probability of best 2 golfers
