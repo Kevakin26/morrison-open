@@ -4,11 +4,8 @@ import { supabase } from '@/lib/supabase'
 import { useAuthStore } from '@/stores/auth'
 import { useChatStore } from '@/stores/chat'
 
-import type { Database } from '@/types/database'
+import type { MessageRow as Message, MessageReactionRow as MessageReaction } from '@/types/database'
 import type { RealtimeChannel } from '@supabase/supabase-js'
-
-type Message = Database['public']['Tables']['messages']['Row']
-type MessageReaction = Database['public']['Tables']['message_reactions']['Row']
 interface ReactionGroup {
   emoji: string
   count: number

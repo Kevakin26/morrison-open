@@ -31,58 +31,53 @@ onUnmounted(() => {
   }
 })
 
-const showNav = computed(() => {
-  return auth.isAuthenticated && !['Login', 'Register'].includes(route.name as string)
-})
-
-const showHeader = computed(() => {
-  return auth.isAuthenticated && !['Login', 'Register', 'Chat', 'Draft'].includes(route.name as string)
-})
+const showNav = computed(() => auth.isAuthenticated && !['Login', 'Register'].includes(route.name as string))
+const showHeader = computed(() => auth.isAuthenticated && !['Login', 'Register', 'Chat'].includes(route.name as string))
 
 const tabs = [
-  { name: 'Draft', path: '/draft', icon: '\u{1F3E0}', label: 'Home' },
-  { name: 'Leaderboard', path: '/leaderboard', icon: '\u{1F3C6}', label: 'Board' },
-  { name: 'MyTeam', path: '/my-team', icon: '\u{1F3CC}\uFE0F', label: 'My Team' },
-  { name: 'Golfers', path: '/golfers', icon: '\u26F3', label: 'Field' },
-  { name: 'Chat', path: '/chat', icon: '\u{1F4AC}', label: 'Chat' },
+  { name: 'Home', path: '/home', icon: '🏠', label: 'Home' },
+  { name: 'Draft', path: '/draft', icon: '🎯', label: 'Draft' },
+  { name: 'Live', path: '/live', icon: '⛳', label: 'Live' },
+  { name: 'Standings', path: '/standings', icon: '🏆', label: 'Standings' },
+  { name: 'Chat', path: '/chat', icon: '💬', label: 'Chat' },
 ]
 
-function navigate(path: string) {
-  router.push(path)
-}
+function navigate(path: string) { router.push(path) }
 </script>
 
 <template>
   <div class="min-h-screen bg-cream flex flex-col">
-    <!-- Header -->
     <header v-if="showHeader" class="bg-augusta-gradient text-white px-4 py-3 flex items-center justify-between safe-top">
       <div class="w-full max-w-4xl mx-auto flex items-center justify-between">
-        <div class="flex items-center gap-2">
-          <img src="/masters-logo.png" alt="Masters" class="h-6" />
-          <h1 class="text-lg md:text-xl font-bold tracking-wide text-gold-glow">THE MORRISON OPEN</h1>
+        <router-link to="/home" class="flex items-center gap-2">
+          <span class="text-2xl">⛳</span>
+          <h1 class="text-lg md:text-xl font-bold tracking-wide text-gold-glow">MORRISON OPEN</h1>
+        </router-link>
+        <div class="flex items-center gap-3">
+          <router-link to="/history" class="text-sm text-cream/80 hover:text-white transition-colors min-h-[44px] flex items-center">
+            History
+          </router-link>
+          <button
+            @click="auth.logout().catch(console.error).then(() => router.push('/login'))"
+            class="text-sm text-cream/80 hover:text-white transition-colors min-h-[44px] flex items-center"
+          >
+            Sign Out
+          </button>
         </div>
-        <button
-          @click="auth.logout().catch(console.error).then(() => router.push('/login'))"
-          class="text-sm text-cream/80 hover:text-white transition-colors min-h-[44px] min-w-[44px] flex items-center justify-center"
-        >
-          Sign Out
-        </button>
       </div>
     </header>
 
-    <!-- Main Content -->
     <main class="flex-1 overflow-y-auto" :class="showNav ? 'pb-20' : ''">
       <router-view />
     </main>
 
-    <!-- Bottom Tab Bar -->
     <nav v-if="showNav" class="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 safe-bottom z-50">
       <div class="flex justify-around items-center h-16 max-w-2xl mx-auto">
         <button
           v-for="tab in tabs"
           :key="tab.name"
           @click="navigate(tab.path)"
-          class="flex flex-col items-center justify-center w-full h-full min-h-[44px] min-w-[44px] transition-colors"
+          class="flex flex-col items-center justify-center w-full h-full min-h-[44px] transition-colors"
           :class="route.name === tab.name ? 'text-augusta' : 'text-gray-400'"
         >
           <span class="relative">
@@ -102,10 +97,6 @@ function navigate(path: string) {
 </template>
 
 <style scoped>
-.safe-top {
-  padding-top: max(0.75rem, env(safe-area-inset-top));
-}
-.safe-bottom {
-  padding-bottom: env(safe-area-inset-bottom);
-}
+.safe-top { padding-top: max(0.75rem, env(safe-area-inset-top)); }
+.safe-bottom { padding-bottom: env(safe-area-inset-bottom); }
 </style>

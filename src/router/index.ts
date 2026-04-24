@@ -13,14 +13,11 @@ const routes = [
     component: () => import('@/views/RegisterView.vue'),
     meta: { requiresAuth: false },
   },
+  { path: '/', redirect: '/home' },
   {
-    path: '/',
-    redirect: '/draft',
-  },
-  {
-    path: '/dashboard',
-    name: 'Dashboard',
-    component: () => import('@/views/DashboardView.vue'),
+    path: '/home',
+    name: 'Home',
+    component: () => import('@/views/HomeView.vue'),
   },
   {
     path: '/draft',
@@ -28,34 +25,26 @@ const routes = [
     component: () => import('@/views/DraftView.vue'),
   },
   {
-    path: '/leaderboard',
-    name: 'Leaderboard',
-    component: () => import('@/views/LeaderboardView.vue'),
+    path: '/live',
+    name: 'Live',
+    component: () => import('@/views/LiveBoardView.vue'),
   },
   {
-    path: '/my-team',
-    name: 'MyTeam',
-    component: () => import('@/views/MyTeamView.vue'),
+    path: '/standings',
+    name: 'Standings',
+    component: () => import('@/views/StandingsView.vue'),
+  },
+  {
+    path: '/history',
+    name: 'History',
+    component: () => import('@/views/HistoryView.vue'),
   },
   {
     path: '/chat',
     name: 'Chat',
     component: () => import('@/views/ChatView.vue'),
   },
-  {
-    path: '/golfers',
-    name: 'Golfers',
-    component: () => import('@/views/GolfersView.vue'),
-  },
-  {
-    path: '/matchup',
-    name: 'Matchup',
-    component: () => import('@/views/MatchupView.vue'),
-  },
-  {
-    path: '/:pathMatch(.*)*',
-    redirect: '/draft',
-  },
+  { path: '/:pathMatch(.*)*', redirect: '/home' },
 ]
 
 const router = createRouter({
@@ -84,7 +73,7 @@ router.beforeEach(async (to, _from, next) => {
   if (requiresAuth && !auth.isAuthenticated) {
     next('/login')
   } else if (!requiresAuth && auth.isAuthenticated && (to.name === 'Login' || to.name === 'Register')) {
-    next('/draft')
+    next('/home')
   } else {
     next()
   }

@@ -56,7 +56,7 @@ async function handleRegister() {
   loading.value = true
   try {
     await auth.register(email.value, password.value, displayName.value)
-    router.push('/draft')
+    router.push('/home')
   } catch (e: any) {
     error.value = e.message || 'Registration failed. Please try again.'
   } finally {
@@ -70,12 +70,12 @@ async function handleRegister() {
     <div class="w-full max-w-md sm:max-w-lg">
       <!-- Header -->
       <div class="text-center mb-8">
-        <img src="/masters-logo.png" alt="The Masters" class="h-16 sm:h-20 mx-auto mb-3 drop-shadow-lg" />
+        <div class="text-6xl mb-3">⛳</div>
         <h1 class="text-gold-glow text-3xl sm:text-4xl font-bold tracking-wide uppercase">
           Join The Morrison Open
         </h1>
         <p class="text-cream/80 text-sm mt-2 tracking-widest uppercase">
-          Masters Fantasy Golf
+          Weekly PGA Fantasy
         </p>
       </div>
 
@@ -171,7 +171,7 @@ async function handleRegister() {
 
       <!-- Footer decoration -->
       <p class="text-center text-cream/30 text-xs mt-8 tracking-widest uppercase">
-        A Tradition Unlike Any Other
+        Every Sunday. One Winner.
       </p>
     </div>
   </div>

@@ -22,7 +22,7 @@ async function handleLogin() {
   loading.value = true
   try {
     await auth.login(email.value, password.value)
-    router.push('/draft')
+    router.push('/home')
   } catch (e: any) {
     error.value = e.message || 'Failed to sign in. Please try again.'
   } finally {
@@ -57,12 +57,12 @@ function openForgotPassword() {
     <div class="w-full max-w-md sm:max-w-lg">
       <!-- Header -->
       <div class="text-center mb-8">
-        <img src="/masters-logo.png" alt="The Masters" class="h-16 sm:h-20 mx-auto mb-3 drop-shadow-lg" />
+        <div class="text-6xl mb-3">⛳</div>
         <h1 class="text-gold-glow text-3xl sm:text-4xl font-bold tracking-wide uppercase">
           The Morrison Open
         </h1>
         <p class="text-cream/80 text-sm mt-2 tracking-widest uppercase">
-          Masters Fantasy Golf
+          Weekly PGA Fantasy
         </p>
       </div>
 
@@ -186,7 +186,7 @@ function openForgotPassword() {
 
       <!-- Footer decoration -->
       <p class="text-center text-cream/30 text-xs mt-8 tracking-widest uppercase">
-        A Tradition Unlike Any Other
+        Every Sunday. One Winner.
       </p>
     </div>
   </div>
