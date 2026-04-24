@@ -124,12 +124,6 @@ function openForgotPassword() {
           >
             Forgot password?
           </button>
-          <p class="text-cream/60 text-sm">
-            Don't have an account?
-            <router-link to="/register" class="text-gold hover:text-gold/80 font-semibold transition">
-              Register
-            </router-link>
-          </p>
         </div>
       </div>
 

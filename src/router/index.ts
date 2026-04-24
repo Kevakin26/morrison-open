@@ -7,12 +7,7 @@ const routes = [
     component: () => import('@/views/LoginView.vue'),
     meta: { requiresAuth: false },
   },
-  {
-    path: '/register',
-    name: 'Register',
-    component: () => import('@/views/RegisterView.vue'),
-    meta: { requiresAuth: false },
-  },
+  { path: '/register', redirect: '/login' },
   { path: '/', redirect: '/home' },
   {
     path: '/home',
@@ -68,7 +63,7 @@ router.beforeEach(async (to, _from, next) => {
 
   if (requiresAuth && !auth.isAuthenticated) {
     next('/login')
-  } else if (!requiresAuth && auth.isAuthenticated && (to.name === 'Login' || to.name === 'Register')) {
+  } else if (!requiresAuth && auth.isAuthenticated && to.name === 'Login') {
     next('/home')
   } else {
     next()
