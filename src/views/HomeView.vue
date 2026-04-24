@@ -70,21 +70,37 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="max-w-3xl mx-auto p-4 space-y-4">
-    <div v-if="loading" class="text-center text-gray-500 py-12">Loading…</div>
+  <div class="relative min-h-screen">
+    <!-- Background video -->
+    <video
+      class="fixed inset-0 w-full h-full object-cover z-0"
+      autoplay
+      muted
+      loop
+      playsinline
+      preload="auto"
+      aria-hidden="true"
+    >
+      <source src="/videos/hero.mp4" type="video/mp4" />
+    </video>
+    <!-- Dark overlay so content stays readable -->
+    <div class="fixed inset-0 bg-gradient-to-b from-augusta-dark/70 via-dark/60 to-dark/80 z-0"></div>
+
+    <div class="max-w-3xl mx-auto p-4 space-y-4 relative z-10">
+    <div v-if="loading" class="text-center text-cream/80 py-12">Loading…</div>
 
     <template v-else>
       <!-- Hero -->
-      <div class="bg-augusta-gradient text-white rounded-xl p-5 shadow-lg">
-        <p class="text-xs uppercase tracking-widest text-cream/70">Morrison Open · 2026 Season</p>
-        <h1 class="text-3xl font-bold mt-1">Every week. One pick. One winner.</h1>
+      <div class="bg-black/30 backdrop-blur-md text-white rounded-xl p-5 shadow-lg border border-white/10">
+        <p class="text-xs uppercase tracking-widest text-gold">Morrison Open · 2026 Season</p>
+        <h1 class="text-3xl font-bold mt-1 text-gold-glow">Every week. One pick. One winner.</h1>
         <p class="text-cream/80 text-sm mt-2">
           Each week, every player drafts a single PGA golfer. Low cumulative points wins the season.
         </p>
       </div>
 
       <!-- Active event card -->
-      <div v-if="activeEvent" class="bg-white rounded-xl p-4 shadow">
+      <div v-if="activeEvent" class="bg-white/90 backdrop-blur-md rounded-xl p-4 shadow border border-white/30">
         <p class="text-xs uppercase tracking-widest text-gray-500">This Week</p>
         <h2 class="text-xl font-bold text-dark">{{ activeEvent.name }}</h2>
         <p class="text-sm text-gray-500">{{ activeEvent.start_date }} → {{ activeEvent.end_date }}</p>
@@ -104,7 +120,7 @@ onUnmounted(() => {
 
       <!-- Upcoming event: show countdown but only flag the draft as open when
            the current tournament is finished. -->
-      <div v-if="upcomingEvent && upcomingEvent.id !== activeEvent?.id" class="bg-white rounded-xl p-4 shadow">
+      <div v-if="upcomingEvent && upcomingEvent.id !== activeEvent?.id" class="bg-white/90 backdrop-blur-md rounded-xl p-4 shadow border border-white/30">
         <p class="text-xs uppercase tracking-widest text-gray-500">Next Up</p>
         <h3 class="text-lg font-bold text-dark">{{ upcomingEvent.name }}</h3>
         <p class="text-sm text-gray-500">Tees off {{ upcomingEvent.start_date }}</p>
@@ -115,7 +131,7 @@ onUnmounted(() => {
       </div>
 
       <!-- Standings snapshot -->
-      <div class="bg-white rounded-xl p-4 shadow">
+      <div class="bg-white/90 backdrop-blur-md rounded-xl p-4 shadow border border-white/30">
         <div class="flex items-center justify-between mb-2">
           <p class="text-xs uppercase tracking-widest text-gray-500">Season Standings</p>
           <button @click="router.push('/standings')" class="text-xs text-augusta font-semibold">View all →</button>
@@ -134,5 +150,6 @@ onUnmounted(() => {
         </ul>
       </div>
     </template>
+    </div>
   </div>
 </template>

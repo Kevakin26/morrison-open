@@ -9,6 +9,7 @@ const auth = useAuthStore()
 
 const showNav = computed(() => auth.isAuthenticated && !['Login', 'Register'].includes(route.name as string))
 const showHeader = computed(() => auth.isAuthenticated && !['Login', 'Register'].includes(route.name as string))
+const transparentShell = computed(() => route.name === 'Home')
 
 const tabs = [
   { name: 'Home', path: '/home', icon: '🏠', label: 'Home' },
@@ -22,7 +23,7 @@ function navigate(path: string) { router.push(path) }
 </script>
 
 <template>
-  <div class="min-h-screen bg-cream flex flex-col">
+  <div class="min-h-screen flex flex-col" :class="transparentShell ? '' : 'bg-cream'">
     <header v-if="showHeader" class="bg-augusta-gradient text-white px-4 py-3 flex items-center justify-between safe-top">
       <div class="w-full max-w-4xl mx-auto flex items-center justify-between">
         <router-link to="/home" class="flex items-center gap-2">
