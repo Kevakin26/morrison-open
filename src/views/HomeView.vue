@@ -2,7 +2,14 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { supabase } from '@/lib/supabase'
-import type { WeeklyEventRow as WeeklyEvent, SeasonStandingRow as Standing } from '@/types/database'
+import type {
+  WeeklyEventRow as WeeklyEvent,
+  SeasonStandingRow as Standing,
+  WeeklyResultRow as Result,
+  PickRow as Pick,
+  LeaderboardSnapshotRow as Snapshot,
+  ProfileRow as Profile,
+} from '@/types/database'
 import type { RealtimeChannel } from '@supabase/supabase-js'
 
 const router = useRouter()
@@ -10,21 +17,100 @@ const router = useRouter()
 const activeEvent = ref<WeeklyEvent | null>(null)
 const upcomingEvent = ref<WeeklyEvent | null>(null)
 const standings = ref<Standing[]>([])
+const weekPicks = ref<Pick[]>([])
+const weekResults = ref<Result[]>([])
+const weekSnapshots = ref<Record<string, Snapshot>>({})
+const members = ref<Profile[]>([])
 const loading = ref(true)
 
-let channel: RealtimeChannel | null = null
+let channels: RealtimeChannel[] = []
+
+const nameById = computed(() => {
+  const m = new Map<string, string>()
+  for (const p of members.value) m.set(p.id, (p.display_name ?? '').trim() || 'Unknown')
+  return m
+})
+
+const statusLabel = (s: string) => ({ active: '', cut: 'CUT', wd: 'WD', dq: 'DQ' } as Record<string, string>)[s] || ''
+
+type PickRow = {
+  user_id: string
+  golfer_name: string
+  position_display: string | null
+  position_numeric: number | null
+  total_to_par_display: string | null
+  status: string
+  points: number
+  rank_in_league: number | null
+}
+
+const weekPickRows = computed<PickRow[]>(() => {
+  if (weekResults.value.length === weekPicks.value.length && weekResults.value.length > 0) {
+    return [...weekResults.value]
+      .sort((a, b) => a.rank_in_league - b.rank_in_league)
+      .map(r => ({
+        user_id: r.user_id,
+        golfer_name: r.golfer_name,
+        position_display: r.position_display,
+        position_numeric: r.position_numeric,
+        total_to_par_display: r.total_to_par_display,
+        status: r.status,
+        points: r.points,
+        rank_in_league: r.rank_in_league,
+      }))
+  }
+  return weekPicks.value.map(p => {
+    const snap = weekSnapshots.value[p.golfer_espn_id]
+    return {
+      user_id: p.user_id,
+      golfer_name: p.golfer_name,
+      position_display: snap?.position_display ?? null,
+      position_numeric: snap?.position_numeric ?? null,
+      total_to_par_display: snap?.total_to_par_display ?? null,
+      status: snap?.status ?? 'active',
+      points: 0,
+      rank_in_league: null,
+    }
+  }).sort((a, b) => (a.position_numeric ?? 9999) - (b.position_numeric ?? 9999))
+})
 
 async function load() {
   loading.value = true
 
-  const [{ data: events }, { data: s }] = await Promise.all([
+  const [{ data: events }, { data: s }, { data: season }] = await Promise.all([
     supabase.from('weekly_events').select('*').order('start_date', { ascending: true }).limit(20),
     supabase.from('season_standings').select('*'),
+    supabase.from('seasons').select('id').eq('status', 'active').single(),
   ])
 
   activeEvent.value = (events ?? []).find(e => ['drafting', 'in_progress'].includes(e.status)) ?? null
   upcomingEvent.value = (events ?? []).find(e => e.status === 'upcoming') ?? null
   standings.value = (s ?? []) as Standing[]
+
+  if (season) {
+    const { data: lm } = await supabase
+      .from('league_members')
+      .select('profiles:profiles!inner(id,display_name,created_at)')
+      .eq('season_id', (season as any).id)
+    members.value = (lm ?? []).map((r: any) => r.profiles).filter(Boolean) as Profile[]
+  }
+
+  if (activeEvent.value) {
+    const evId = activeEvent.value.id
+    const [{ data: picks }, { data: results }, { data: snaps }] = await Promise.all([
+      supabase.from('picks').select('*').eq('event_id', evId),
+      supabase.from('weekly_results').select('*').eq('event_id', evId),
+      supabase.from('leaderboard_snapshots').select('*').eq('event_id', evId),
+    ])
+    weekPicks.value = (picks ?? []) as Pick[]
+    weekResults.value = (results ?? []) as Result[]
+    const m: Record<string, Snapshot> = {}
+    for (const snap of (snaps ?? []) as Snapshot[]) m[snap.golfer_espn_id] = snap
+    weekSnapshots.value = m
+  } else {
+    weekPicks.value = []; weekResults.value = []; weekSnapshots.value = {}
+  }
+
   loading.value = false
 }
 
@@ -58,14 +144,19 @@ onMounted(() => {
   load()
   tick()
   timer = setInterval(tick, 1000)
-  channel = supabase.channel('home')
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'weekly_events' }, load)
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'weekly_results' }, load)
-    .subscribe()
+  channels.push(
+    supabase.channel('home')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'weekly_events' }, load)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'weekly_results' }, load)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'picks' }, load)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'leaderboard_snapshots' }, load)
+      .subscribe()
+  )
 })
 onUnmounted(() => {
   if (timer) clearInterval(timer)
-  if (channel) supabase.removeChannel(channel)
+  channels.forEach(c => supabase.removeChannel(c))
+  channels = []
 })
 </script>
 
@@ -116,6 +207,36 @@ onUnmounted(() => {
             Live Board
           </button>
         </div>
+      </div>
+
+      <!-- This week's picks -->
+      <div v-if="activeEvent && weekPickRows.length" class="bg-white/90 backdrop-blur-md rounded-xl p-4 shadow border border-white/30">
+        <div class="flex items-center justify-between mb-2">
+          <p class="text-xs uppercase tracking-widest text-gray-500">This Week's Picks</p>
+          <button @click="router.push('/live')" class="text-xs text-augusta font-semibold">Live board →</button>
+        </div>
+        <ul class="divide-y">
+          <li v-for="r in weekPickRows" :key="r.user_id" class="py-2 flex items-center justify-between gap-3">
+            <div class="flex items-center gap-3 min-w-0">
+              <span class="font-score text-sm text-gray-500 w-10 flex-shrink-0">
+                {{ r.position_display || statusLabel(r.status) || '—' }}
+              </span>
+              <div class="min-w-0">
+                <p class="font-semibold text-dark truncate">{{ r.golfer_name }}</p>
+                <p class="text-xs text-gray-500 truncate">{{ nameById.get(r.user_id) || '…' }}</p>
+              </div>
+            </div>
+            <div class="text-right flex-shrink-0">
+              <p class="font-score font-bold text-sm" :class="r.status !== 'active' ? 'text-red-500' : 'text-dark'">
+                {{ r.total_to_par_display || '—' }}
+              </p>
+              <p v-if="r.points > 0" class="text-xs">
+                <span class="font-bold text-augusta">{{ r.points }}</span>
+                <span class="text-gray-400"> pts</span>
+              </p>
+            </div>
+          </li>
+        </ul>
       </div>
 
       <!-- Upcoming event: show countdown but only flag the draft as open when
