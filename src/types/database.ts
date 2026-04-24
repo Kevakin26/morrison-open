@@ -70,8 +70,6 @@ export interface WeeklyResultRow {
   is_final: boolean
   updated_at: string
 }
-export interface MessageRow { id: string; user_id: string; content: string; created_at: string }
-export interface MessageReactionRow { id: string; message_id: string; user_id: string; emoji: string; created_at: string }
 export interface SeasonStandingRow {
   season_id: string
   user_id: string
@@ -112,13 +110,6 @@ export interface Database {
         Relationships: Rel
       }
       weekly_results: { Row: WeeklyResultRow; Insert: Partial<WeeklyResultRow>; Update: Partial<WeeklyResultRow>; Relationships: Rel }
-      messages: { Row: MessageRow; Insert: Partial<MessageRow> & { user_id: string; content: string }; Update: Partial<MessageRow>; Relationships: Rel }
-      message_reactions: {
-        Row: MessageReactionRow
-        Insert: Partial<MessageReactionRow> & { message_id: string; user_id: string; emoji: string }
-        Update: Partial<MessageReactionRow>
-        Relationships: Rel
-      }
     }
     Views: {
       season_standings: { Row: SeasonStandingRow; Relationships: Rel }

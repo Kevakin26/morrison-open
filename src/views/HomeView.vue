@@ -89,7 +89,11 @@ onUnmounted(() => {
         <h2 class="text-xl font-bold text-dark">{{ activeEvent.name }}</h2>
         <p class="text-sm text-gray-500">{{ activeEvent.start_date }} → {{ activeEvent.end_date }}</p>
         <div class="mt-3 flex gap-2">
-          <button @click="router.push('/draft')" class="px-4 py-2 bg-augusta text-white rounded-lg text-sm font-semibold">
+          <button
+            v-if="activeEvent.status === 'drafting'"
+            @click="router.push('/draft')"
+            class="px-4 py-2 bg-augusta text-white rounded-lg text-sm font-semibold"
+          >
             Draft Room
           </button>
           <button @click="router.push('/live')" class="px-4 py-2 bg-gold text-dark rounded-lg text-sm font-semibold">
@@ -98,12 +102,16 @@ onUnmounted(() => {
         </div>
       </div>
 
-      <!-- Upcoming / next-draft countdown -->
+      <!-- Upcoming event: show countdown but only flag the draft as open when
+           the current tournament is finished. -->
       <div v-if="upcomingEvent && upcomingEvent.id !== activeEvent?.id" class="bg-white rounded-xl p-4 shadow">
-        <p class="text-xs uppercase tracking-widest text-gray-500">Next Draft</p>
+        <p class="text-xs uppercase tracking-widest text-gray-500">Next Up</p>
         <h3 class="text-lg font-bold text-dark">{{ upcomingEvent.name }}</h3>
         <p class="text-sm text-gray-500">Tees off {{ upcomingEvent.start_date }}</p>
-        <p v-if="countdown" class="mt-3 font-score text-2xl text-augusta">{{ countdown }}</p>
+        <p v-if="activeEvent && activeEvent.status === 'in_progress'" class="mt-3 text-sm text-gray-500">
+          Draft unlocks after {{ activeEvent.name }} ends ({{ activeEvent.end_date }}).
+        </p>
+        <p v-else-if="countdown" class="mt-3 font-score text-2xl text-augusta">{{ countdown }}</p>
       </div>
 
       <!-- Standings snapshot -->

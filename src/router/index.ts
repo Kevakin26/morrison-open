@@ -39,11 +39,7 @@ const routes = [
     name: 'History',
     component: () => import('@/views/HistoryView.vue'),
   },
-  {
-    path: '/chat',
-    name: 'Chat',
-    component: () => import('@/views/ChatView.vue'),
-  },
+  { path: '/chat', redirect: '/home' },
   { path: '/:pathMatch(.*)*', redirect: '/home' },
 ]
 

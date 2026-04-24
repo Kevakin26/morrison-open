@@ -1,45 +1,21 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted } from 'vue'
-import type { RealtimeChannel } from '@supabase/supabase-js'
+import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from './stores/auth'
-import { useChatStore } from './stores/chat'
-import { supabase } from './lib/supabase'
 
 const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
-const chatStore = useChatStore()
-
-let chatChannel: RealtimeChannel | null = null
-
-onMounted(() => {
-  chatChannel = supabase
-    .channel('global-chat-notifications')
-    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, (payload) => {
-      if (payload.new && (payload.new as any).user_id !== auth.user?.id && route.name !== 'Chat') {
-        chatStore.increment()
-      }
-    })
-    .subscribe()
-})
-
-onUnmounted(() => {
-  if (chatChannel) {
-    supabase.removeChannel(chatChannel)
-    chatChannel = null
-  }
-})
 
 const showNav = computed(() => auth.isAuthenticated && !['Login', 'Register'].includes(route.name as string))
-const showHeader = computed(() => auth.isAuthenticated && !['Login', 'Register', 'Chat'].includes(route.name as string))
+const showHeader = computed(() => auth.isAuthenticated && !['Login', 'Register'].includes(route.name as string))
 
 const tabs = [
   { name: 'Home', path: '/home', icon: '🏠', label: 'Home' },
   { name: 'Draft', path: '/draft', icon: '🎯', label: 'Draft' },
   { name: 'Live', path: '/live', icon: '⛳', label: 'Live' },
   { name: 'Standings', path: '/standings', icon: '🏆', label: 'Standings' },
-  { name: 'Chat', path: '/chat', icon: '💬', label: 'Chat' },
+  { name: 'History', path: '/history', icon: '📅', label: 'History' },
 ]
 
 function navigate(path: string) { router.push(path) }
@@ -53,17 +29,12 @@ function navigate(path: string) { router.push(path) }
           <span class="text-2xl">⛳</span>
           <h1 class="text-lg md:text-xl font-bold tracking-wide text-gold-glow">MORRISON OPEN</h1>
         </router-link>
-        <div class="flex items-center gap-3">
-          <router-link to="/history" class="text-sm text-cream/80 hover:text-white transition-colors min-h-[44px] flex items-center">
-            History
-          </router-link>
-          <button
-            @click="auth.logout().catch(console.error).then(() => router.push('/login'))"
-            class="text-sm text-cream/80 hover:text-white transition-colors min-h-[44px] flex items-center"
-          >
-            Sign Out
-          </button>
-        </div>
+        <button
+          @click="auth.logout().catch(console.error).then(() => router.push('/login'))"
+          class="text-sm text-cream/80 hover:text-white transition-colors min-h-[44px] flex items-center"
+        >
+          Sign Out
+        </button>
       </div>
     </header>
 
@@ -80,15 +51,7 @@ function navigate(path: string) { router.push(path) }
           class="flex flex-col items-center justify-center w-full h-full min-h-[44px] transition-colors"
           :class="route.name === tab.name ? 'text-augusta' : 'text-gray-400'"
         >
-          <span class="relative">
-            <span class="text-2xl md:text-xl">{{ tab.icon }}</span>
-            <span
-              v-if="tab.name === 'Chat' && chatStore.unreadCount > 0"
-              class="absolute -top-1 -right-2 bg-red-500 text-white text-[10px] font-bold rounded-full min-w-[18px] h-[18px] flex items-center justify-center px-1"
-            >
-              {{ chatStore.unreadCount > 99 ? '99+' : chatStore.unreadCount }}
-            </span>
-          </span>
+          <span class="text-2xl md:text-xl">{{ tab.icon }}</span>
           <span class="text-[10px] sm:text-xs mt-0.5 font-medium">{{ tab.label }}</span>
         </button>
       </div>

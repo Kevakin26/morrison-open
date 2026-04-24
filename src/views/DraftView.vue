@@ -14,6 +14,7 @@ import type { RealtimeChannel } from '@supabase/supabase-js'
 const auth = useAuthStore()
 
 const event = ref<WeeklyEvent | null>(null)
+const blockingEvent = ref<WeeklyEvent | null>(null)
 const draftState = ref<DraftState | null>(null)
 const picks = ref<Pick[]>([])
 const field = ref<Snapshot[]>([])
@@ -56,30 +57,46 @@ const filteredField = computed(() => {
 async function loadEvent() {
   loading.value = true
   error.value = ''
+  event.value = null
+  blockingEvent.value = null
 
-  // Prefer an event that is currently drafting or upcoming
-  const { data: events, error: eErr } = await supabase
+  // If a tournament is currently in_progress, the next draft is hidden until
+  // it finishes. Surface the blocker so the UI can explain.
+  const { data: inProg } = await supabase
     .from('weekly_events')
     .select('*')
-    .in('status', ['drafting', 'upcoming'])
+    .eq('status', 'in_progress')
+    .order('start_date', { ascending: false })
+    .limit(1)
+  const blocker = (inProg?.[0] ?? null) as WeeklyEvent | null
+
+  // Show a draft room for an event that is actively drafting first
+  const { data: drafting } = await supabase
+    .from('weekly_events')
+    .select('*')
+    .eq('status', 'drafting')
     .order('start_date', { ascending: true })
     .limit(1)
+  let current = (drafting?.[0] ?? null) as WeeklyEvent | null
 
-  if (eErr) { error.value = eErr.message; loading.value = false; return }
-
-  let current = events?.[0]
-  if (!current) {
-    // fall back to most recent event
-    const { data: recent } = await supabase
+  // If nothing is drafting and no event is in_progress, show the next upcoming
+  if (!current && !blocker) {
+    const { data: upcoming } = await supabase
       .from('weekly_events')
       .select('*')
-      .order('start_date', { ascending: false })
+      .eq('status', 'upcoming')
+      .order('start_date', { ascending: true })
       .limit(1)
-    current = recent?.[0]
+    current = (upcoming?.[0] ?? null) as WeeklyEvent | null
   }
-  if (!current) { loading.value = false; return }
-  event.value = current
 
+  if (!current) {
+    blockingEvent.value = blocker
+    loading.value = false
+    return
+  }
+
+  event.value = current
   await Promise.all([loadDraftState(), loadPicks(), loadField(), loadMembers(), loadUsed()])
   loading.value = false
 }
@@ -163,13 +180,19 @@ async function makePick(g: Snapshot) {
 }
 
 function subscribe() {
+  // Global listener for any weekly_events change so the draft unlocks when
+  // the in-progress tournament finishes.
+  channels.push(
+    supabase.channel(`draft-events-global`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'weekly_events' }, () => loadEvent())
+      .subscribe()
+  )
   if (!event.value) return
   channels.push(
     supabase.channel(`draft:${event.value.id}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'draft_state', filter: `event_id=eq.${event.value.id}` }, () => loadDraftState())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'picks', filter: `event_id=eq.${event.value.id}` }, () => { loadPicks(); loadUsed() })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'leaderboard_snapshots', filter: `event_id=eq.${event.value.id}` }, () => loadField())
-      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'weekly_events', filter: `id=eq.${event.value.id}` }, (p) => { event.value = p.new as WeeklyEvent })
       .subscribe()
   )
 }
@@ -197,8 +220,16 @@ watch(() => event.value?.id, (id, prev) => {
   <div class="max-w-3xl mx-auto p-4 space-y-4">
     <div v-if="loading" class="text-center text-gray-500 py-12">Loading draft…</div>
 
+    <div v-else-if="!event && blockingEvent" class="text-center py-12 bg-white rounded-xl shadow px-6">
+      <p class="text-4xl mb-3">⏳</p>
+      <p class="text-lg font-semibold text-dark">Draft opens after {{ blockingEvent.name }}</p>
+      <p class="text-sm text-gray-500 mt-2">
+        The next draft will be available once this week's tournament wraps up ({{ blockingEvent.end_date }}).
+      </p>
+    </div>
+
     <div v-else-if="!event" class="text-center py-12 bg-white rounded-xl shadow">
-      <p class="text-lg font-semibold text-dark">No active event</p>
+      <p class="text-lg font-semibold text-dark">No upcoming event</p>
       <p class="text-sm text-gray-500 mt-2">A new PGA event will appear here automatically each week.</p>
     </div>
 
