@@ -195,6 +195,10 @@ onUnmounted(() => {
         <p class="text-xs uppercase tracking-widest text-gray-500">This Week</p>
         <h2 class="text-xl font-bold text-dark">{{ activeEvent.name }}</h2>
         <p class="text-sm text-gray-500">{{ activeEvent.start_date }} → {{ activeEvent.end_date }}</p>
+        <div v-if="activeEvent.status === 'drafting' && countdown" class="mt-3">
+          <p class="text-[10px] uppercase tracking-widest text-gray-500">Tee off in</p>
+          <p class="font-score text-2xl text-augusta">{{ countdown }}</p>
+        </div>
         <div class="mt-3 flex gap-2">
           <button
             v-if="activeEvent.status === 'drafting'"

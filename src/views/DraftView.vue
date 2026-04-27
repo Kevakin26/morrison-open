@@ -242,19 +242,14 @@ watch(() => event.value?.id, (id, prev) => {
         <p class="mt-2 inline-block px-2 py-0.5 rounded bg-white/10 text-xs uppercase tracking-wider">{{ event.status.replace('_', ' ') }}</p>
       </div>
 
-      <!-- Start draft CTA or draft state -->
+      <!-- Draft hasn't been opened yet by the cron — show a waiting state. -->
       <div v-if="!draftState || draftState.status === 'pending'" class="bg-white rounded-xl p-6 shadow text-center">
-        <p class="text-gray-700 mb-4">Draft has not been started yet. Any league member can kick it off.</p>
-        <button
-          @click="startDraft"
-          :disabled="submitting"
-          class="px-6 py-3 bg-augusta text-white rounded-lg font-semibold uppercase tracking-wide hover:bg-augusta-dark disabled:opacity-60"
-        >
-          {{ submitting ? 'Starting…' : 'Start Draft' }}
-        </button>
+        <p class="text-4xl mb-3">⏳</p>
+        <p class="text-lg font-semibold text-dark">Draft opens after the previous tournament finishes</p>
+        <p class="text-sm text-gray-500 mt-2">It'll show up here automatically — usually Sunday night or Monday morning.</p>
       </div>
 
-      <!-- Draft order + on-the-clock -->
+      <!-- Draft order + whose turn -->
       <div v-else class="bg-white rounded-xl p-4 shadow">
         <p class="text-xs uppercase tracking-widest text-gray-500 mb-2">Draft Order (last place picks first)</p>
         <div class="flex gap-2 overflow-x-auto no-scrollbar pb-1">
@@ -276,9 +271,9 @@ watch(() => event.value?.id, (id, prev) => {
         </div>
 
         <div v-if="draftState.status === 'active'" class="mt-3 pt-3 border-t">
-          <p v-if="isMyTurn" class="text-augusta font-bold text-center">You're on the clock. Pick a golfer below.</p>
+          <p v-if="isMyTurn" class="text-augusta font-bold text-center">You're up. Submit your pick below.</p>
           <p v-else class="text-gray-600 text-center">
-            On the clock: <span class="font-semibold text-dark">{{ nameById.get(currentPickUserId || '') || '…' }}</span>
+            Waiting on <span class="font-semibold text-dark">{{ nameById.get(currentPickUserId || '') || '…' }}</span> to pick.
           </p>
         </div>
 
