@@ -155,17 +155,6 @@ async function loadUsed() {
   usedThisSeason.value = new Set(((data ?? []) as any[]).map(r => r.golfer_espn_id))
 }
 
-async function startDraft() {
-  if (!event.value) return
-  submitting.value = true
-  error.value = ''
-  const { error: rpcErr } = await supabase.rpc('start_weekly_draft', { p_event_id: event.value.id })
-  if (rpcErr) error.value = rpcErr.message
-  submitting.value = false
-  await loadDraftState()
-  await loadEvent()
-}
-
 async function makePick(g: Snapshot) {
   if (!event.value || !isMyTurn.value || submitting.value) return
   submitting.value = true
