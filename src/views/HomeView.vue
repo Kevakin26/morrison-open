@@ -117,22 +117,22 @@ async function load() {
 const countdown = ref('')
 let timer: ReturnType<typeof setInterval> | null = null
 
-const draftTarget = computed(() => {
-  // draft happens Wednesday before the tournament's start_date (Thursday)
-  const ev = activeEvent.value?.status === 'drafting' ? activeEvent.value : upcomingEvent.value
-  if (!ev) return null
-  const start = new Date(ev.start_date + 'T00:00:00Z')
-  // 1 day earlier + 7pm MST (02:00 UTC next day) -> use Wed 7pm local
-  const draft = new Date(start)
-  draft.setUTCDate(draft.getUTCDate() - 1)
-  draft.setUTCHours(2, 0, 0, 0) // ~7 PM MST
-  return draft
+const teeOffTarget = computed(() => {
+  // Use the next event the league cares about: prefer one that hasn't teed
+  // off yet (drafting/upcoming) over an in_progress one.
+  const next = (activeEvent.value && activeEvent.value.status === 'drafting')
+    ? activeEvent.value
+    : upcomingEvent.value
+  if (!next) return null
+  // start_date is a date string; the PGA Thursday morning round typically
+  // tees off ~7am ET (11:00 UTC).
+  return new Date(next.start_date + 'T11:00:00Z')
 })
 
 function tick() {
-  if (!draftTarget.value) { countdown.value = ''; return }
-  const diff = draftTarget.value.getTime() - Date.now()
-  if (diff <= 0) { countdown.value = 'Draft is open'; return }
+  if (!teeOffTarget.value) { countdown.value = ''; return }
+  const diff = teeOffTarget.value.getTime() - Date.now()
+  if (diff <= 0) { countdown.value = 'Tee off has begun'; return }
   const d = Math.floor(diff / 86400000)
   const h = Math.floor((diff / 3600000) % 24)
   const m = Math.floor((diff / 60000) % 60)
@@ -239,8 +239,7 @@ onUnmounted(() => {
         </ul>
       </div>
 
-      <!-- Upcoming event: show countdown but only flag the draft as open when
-           the current tournament is finished. -->
+      <!-- Upcoming event: countdown to tee-off. -->
       <div v-if="upcomingEvent && upcomingEvent.id !== activeEvent?.id" class="bg-white/90 backdrop-blur-md rounded-xl p-4 shadow border border-white/30">
         <p class="text-xs uppercase tracking-widest text-gray-500">Next Up</p>
         <h3 class="text-lg font-bold text-dark">{{ upcomingEvent.name }}</h3>
@@ -248,7 +247,10 @@ onUnmounted(() => {
         <p v-if="activeEvent && activeEvent.status === 'in_progress'" class="mt-3 text-sm text-gray-500">
           Draft unlocks after {{ activeEvent.name }} ends ({{ activeEvent.end_date }}).
         </p>
-        <p v-else-if="countdown" class="mt-3 font-score text-2xl text-augusta">{{ countdown }}</p>
+        <div v-if="countdown" class="mt-3">
+          <p class="text-[10px] uppercase tracking-widest text-gray-500">Tee off in</p>
+          <p class="font-score text-2xl text-augusta">{{ countdown }}</p>
+        </div>
       </div>
 
       <!-- Standings snapshot -->
