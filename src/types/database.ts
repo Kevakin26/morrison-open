@@ -75,6 +75,7 @@ export interface SeasonStandingRow {
   user_id: string
   display_name: string
   total_points: number
+  wins: number
   firsts: number
   seconds: number
   thirds: number

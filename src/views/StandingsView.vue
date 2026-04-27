@@ -28,27 +28,29 @@ onUnmounted(() => { if (channel) supabase.removeChannel(channel) })
     <div class="bg-augusta-gradient text-white rounded-xl p-4 shadow">
       <p class="text-xs uppercase tracking-widest text-cream/70">Season Standings</p>
       <h2 class="text-2xl font-bold">2026 Morrison Open</h2>
-      <p class="text-xs text-cream/70 mt-1">Lower score wins. Tiebreaks: most 1st-place finishes, then 2nds, 3rds.</p>
+      <p class="text-xs text-cream/70 mt-1">Lower score wins. Tiebreaks: most outright wins (W), then 1sts, 2nds, 3rds.</p>
     </div>
 
     <div v-if="loading" class="text-center text-gray-500 py-12">Loading…</div>
 
     <div v-else class="bg-white rounded-xl shadow overflow-hidden">
-      <div class="grid grid-cols-12 py-2 px-3 bg-gray-50 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+      <div class="grid grid-cols-[24px_minmax(0,1fr)_44px_28px_28px_28px_28px_28px_30px] gap-x-1 py-2 px-3 bg-gray-50 text-xs font-semibold text-gray-500 uppercase tracking-wider">
         <div class="col-span-1">#</div>
-        <div class="col-span-4">Player</div>
-        <div class="col-span-2 text-center">Pts</div>
+        <div class="col-span-1">Player</div>
+        <div class="col-span-1 text-center">Pts</div>
+        <div class="col-span-1 text-center" title="Outright tournament wins">W</div>
         <div class="col-span-1 text-center">1st</div>
         <div class="col-span-1 text-center">2nd</div>
         <div class="col-span-1 text-center">3rd</div>
         <div class="col-span-1 text-center">4th</div>
-        <div class="col-span-1 text-center">W</div>
+        <div class="col-span-1 text-center" title="Weeks played">Wks</div>
       </div>
       <ul class="divide-y">
-        <li v-for="(s, i) in standings" :key="s.user_id" class="grid grid-cols-12 py-3 px-3 items-center text-sm">
+        <li v-for="(s, i) in standings" :key="s.user_id" class="grid grid-cols-[24px_minmax(0,1fr)_44px_28px_28px_28px_28px_28px_30px] gap-x-1 py-3 px-3 items-center text-sm">
           <div class="col-span-1 font-score text-gray-500">{{ i + 1 }}</div>
-          <div class="col-span-4 font-semibold text-dark truncate">{{ s.display_name }}</div>
-          <div class="col-span-2 text-center font-score font-bold text-augusta">{{ s.total_points }}</div>
+          <div class="col-span-1 font-semibold text-dark truncate">{{ s.display_name }}</div>
+          <div class="col-span-1 text-center font-score font-bold text-augusta">{{ s.total_points }}</div>
+          <div class="col-span-1 text-center font-score font-bold text-gold">{{ s.wins }}</div>
           <div class="col-span-1 text-center font-score text-gray-600">{{ s.firsts }}</div>
           <div class="col-span-1 text-center font-score text-gray-600">{{ s.seconds }}</div>
           <div class="col-span-1 text-center font-score text-gray-600">{{ s.thirds }}</div>
@@ -61,6 +63,7 @@ onUnmounted(() => { if (channel) supabase.removeChannel(channel) })
     <div class="bg-white rounded-xl p-4 shadow text-sm text-gray-600 space-y-2">
       <p class="font-semibold text-dark">Scoring</p>
       <ul class="space-y-1 text-xs">
+        <li>🏆 Pick wins the tournament outright: <span class="font-bold">0 pts</span></li>
         <li>🥇 1st among our 5 picks: <span class="font-bold">1 pt</span></li>
         <li>🥈 2nd: <span class="font-bold">2 pts</span></li>
         <li>🥉 3rd: <span class="font-bold">3 pts</span></li>
