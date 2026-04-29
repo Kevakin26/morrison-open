@@ -24,6 +24,33 @@ const loading = ref(true)
 const error = ref('')
 const search = ref('')
 const submitting = ref(false)
+const worldRanks = ref<Map<string, number>>(new Map())
+
+function normalizeName(s: string) {
+  return s.toLowerCase()
+    .normalize('NFD').replace(/\p{Diacritic}/gu, '')
+    .replace(/[^a-z\s]/g, '')
+    .trim()
+}
+
+async function loadWorldRankings() {
+  try {
+    const r = await fetch('/world_rankings.json', { cache: 'no-cache' })
+    if (!r.ok) return
+    const data = await r.json()
+    const m = new Map<string, number>()
+    for (const item of (data.rankings ?? [])) {
+      m.set(normalizeName(item.name), item.rank)
+    }
+    worldRanks.value = m
+  } catch (e) {
+    console.warn('world rankings load failed', e)
+  }
+}
+
+function rankFor(name: string): number {
+  return worldRanks.value.get(normalizeName(name)) ?? 9999
+}
 
 let channels: RealtimeChannel[] = []
 
@@ -45,12 +72,18 @@ const pickedGolferIds = computed(() => new Set(picks.value.map(p => p.golfer_esp
 
 const filteredField = computed(() => {
   const q = search.value.trim().toLowerCase()
-  return field.value.filter(g => {
+  const list = field.value.filter(g => {
     if (pickedGolferIds.value.has(g.golfer_espn_id)) return false
     if (usedThisSeason.value.has(g.golfer_espn_id)) return false
     if (g.status !== 'active') return false
     if (!q) return true
     return g.golfer_name.toLowerCase().includes(q)
+  })
+  return [...list].sort((a, b) => {
+    const ra = rankFor(a.golfer_name)
+    const rb = rankFor(b.golfer_name)
+    if (ra !== rb) return ra - rb
+    return a.golfer_name.localeCompare(b.golfer_name)
   })
 })
 
@@ -187,7 +220,7 @@ function subscribe() {
 }
 
 onMounted(async () => {
-  await loadEvent()
+  await Promise.all([loadEvent(), loadWorldRankings()])
   subscribe()
 })
 
@@ -292,7 +325,7 @@ watch(() => event.value?.id, (id, prev) => {
       <!-- Golfer field -->
       <div v-if="draftState && draftState.status === 'active'" class="bg-white rounded-xl p-4 shadow">
         <div class="flex items-center justify-between mb-3">
-          <p class="text-xs uppercase tracking-widest text-gray-500">The Field</p>
+          <p class="text-xs uppercase tracking-widest text-gray-500">The Field · sorted by world rank</p>
           <input
             v-model="search"
             type="text"
@@ -305,17 +338,19 @@ watch(() => event.value?.id, (id, prev) => {
         </div>
         <ul v-else class="divide-y max-h-[60vh] overflow-y-auto">
           <li v-for="g in filteredField" :key="g.golfer_espn_id" class="py-2 flex items-center justify-between gap-2">
-            <div class="flex items-center gap-3">
-              <span class="font-score text-sm text-gray-500 w-10">{{ g.position_display || '—' }}</span>
-              <div>
-                <p class="font-semibold text-dark">{{ g.golfer_name }}</p>
-                <p v-if="g.total_to_par_display" class="text-xs text-gray-500 font-score">{{ g.total_to_par_display }}</p>
+            <div class="flex items-center gap-3 min-w-0">
+              <span class="font-score text-xs text-augusta font-bold w-9 text-center">
+                {{ rankFor(g.golfer_name) === 9999 ? '—' : '#' + rankFor(g.golfer_name) }}
+              </span>
+              <div class="min-w-0">
+                <p class="font-semibold text-dark truncate">{{ g.golfer_name }}</p>
+                <p v-if="g.total_to_par_display && g.total_to_par_display !== 'E'" class="text-xs text-gray-500 font-score">{{ g.total_to_par_display }}</p>
               </div>
             </div>
             <button
               @click="makePick(g)"
               :disabled="!isMyTurn || submitting"
-              class="px-3 py-1.5 rounded-lg text-sm font-semibold uppercase tracking-wider transition"
+              class="px-3 py-1.5 rounded-lg text-sm font-semibold uppercase tracking-wider transition flex-shrink-0"
               :class="isMyTurn
                 ? 'bg-augusta text-white hover:bg-augusta-dark'
                 : 'bg-gray-100 text-gray-400 cursor-not-allowed'"
