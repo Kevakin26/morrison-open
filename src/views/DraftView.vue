@@ -53,6 +53,7 @@ function rankFor(name: string): number {
 }
 
 let channels: RealtimeChannel[] = []
+let heartbeat: ReturnType<typeof setInterval> | null = null
 
 const nameById = computed(() => {
   const m = new Map<string, string>()
@@ -189,15 +190,30 @@ async function loadUsed() {
 }
 
 async function makePick(g: Snapshot) {
-  if (!event.value || !isMyTurn.value || submitting.value) return
+  if (!event.value || submitting.value) return
   submitting.value = true
   error.value = ''
+  // Always re-sync draft state and picks before submitting so we don't rely on
+  // a stale realtime subscription. The realtime channel can drop messages on
+  // network blips, leaving the client thinking it's still someone else's turn
+  // (or that it's already past it).
+  await Promise.all([loadDraftState(), loadPicks(), loadUsed()])
+  if (!isMyTurn.value) {
+    const who = nameById.value.get(currentPickUserId.value || '') || 'someone else'
+    error.value = `Heads up — it's ${who}'s turn now. Pull to refresh.`
+    submitting.value = false
+    return
+  }
   const { error: rpcErr } = await supabase.rpc('make_weekly_pick', {
     p_event_id: event.value.id,
     p_golfer_espn_id: g.golfer_espn_id,
     p_golfer_name: g.golfer_name,
   })
-  if (rpcErr) error.value = rpcErr.message
+  if (rpcErr) {
+    error.value = rpcErr.message
+    // Server rejected — re-sync so the UI reflects whatever actually happened.
+    await Promise.all([loadDraftState(), loadPicks(), loadUsed()])
+  }
   submitting.value = false
 }
 
@@ -219,14 +235,32 @@ function subscribe() {
   )
 }
 
+function handleVisibility() {
+  if (document.visibilityState === 'visible' && event.value) {
+    loadDraftState()
+    loadPicks()
+  }
+}
+
 onMounted(async () => {
   await Promise.all([loadEvent(), loadWorldRankings()])
   subscribe()
+  // Backstop for missed realtime events: re-poll draft state every 15s while
+  // the page is open. Cheap call, makes turn order self-correcting.
+  heartbeat = setInterval(() => {
+    if (!event.value) return
+    if (draftState.value?.status === 'completed') return
+    loadDraftState()
+    loadPicks()
+  }, 15000)
+  document.addEventListener('visibilitychange', handleVisibility)
 })
 
 onUnmounted(() => {
   channels.forEach(c => supabase.removeChannel(c))
   channels = []
+  if (heartbeat) clearInterval(heartbeat)
+  document.removeEventListener('visibilitychange', handleVisibility)
 })
 
 watch(() => event.value?.id, (id, prev) => {
@@ -349,11 +383,11 @@ watch(() => event.value?.id, (id, prev) => {
             </div>
             <button
               @click="makePick(g)"
-              :disabled="!isMyTurn || submitting"
+              :disabled="submitting"
               class="px-3 py-1.5 rounded-lg text-sm font-semibold uppercase tracking-wider transition flex-shrink-0"
               :class="isMyTurn
                 ? 'bg-augusta text-white hover:bg-augusta-dark'
-                : 'bg-gray-100 text-gray-400 cursor-not-allowed'"
+                : 'bg-gray-100 text-gray-500 hover:bg-gray-200'"
             >
               Pick
             </button>
